@@ -1,0 +1,39 @@
+ ⨯ ./app/globals.css
+Module not found: Can't resolve 'C:\Users\js100\Desktop\coding\mistakepatch\frontend\app\globals.css'
+
+https://nextjs.org/docs/messages/module-not-found
+ ⨯ ./app/globals.css
+Error: ENOENT: no such file or directory, open 'C:\Users\js100\Desktop\coding\mistakepatch\frontend\app\globals.css'
+
+Import trace for requested module:
+./app/globals.css
+./app/layout.tsx
+ ⚠ ./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!./app/globals.css
+Warning
+
+(61:3) autoprefixer: end value has mixed support, consider using flex-end instead
+
+Import trace for requested module:
+./app/globals.css.webpack[javascript/auto]!=!./node_modules/next/dist/build/webpack/loaders/css-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[2]!./node_modules/next/dist/build/webpack/loaders/postcss-loader/src/index.js??ruleSet[1].rules[14].oneOf[12].use[3]!./app/globals.css
+./app/globals.css
+<w> [webpack.cache.PackFileCacheStrategy] Skipped not serializable cache item 'Compilation/modules|C:\Users\js100\Desktop\coding\mistakepatch\frontend\node_modules\next\dist\build\webpack\loaders\css-loader\src\index.js??ruleSet[1].rules[14].oneOf[12].use[2]!C:\Users\js100\Desktop\coding\mistakepatch\frontend\node_modules\next\dist\build\webpack\loaders\postcss-loader\src\index.js??ruleSet[1].rules[14].oneOf[12].use[3]!C:\Users\js100\Desktop\coding\mistakepatch\frontend\app\globals.css': No serializer registered for Warning
+<w> while serializing webpack/lib/cache/PackFileCacheStrategy.PackContentItems -> webpack/lib/NormalModule -> Array { 1 items } -> webpack/lib/ModuleWarning -> Warning
+ ⨯ ./components/NoteCanvas.tsx
+Error: Failed to read source code from C:\Users\js100\Desktop\coding\mistakepatch\frontend\components\NoteCanvas.tsx
+
+Caused by:
+    지정된 파일을 찾을 수 없습니다. (os error 2)
+
+Import trace for requested module:
+./components/NoteCanvas.tsx
+./app/page.tsx
+ ⨯ ./components/NoteCanvas.tsx
+Error: Failed to read source code from C:\Users\js100\Desktop\coding\mistakepatch\frontend\components\NoteCanvas.tsx
+
+Caused by:
+    지정된 파일을 찾을 수 없습니다. (os error 2)
+
+Import trace for requested module:
+./components/NoteCanvas.tsx
+./app/page.tsx
+^C
