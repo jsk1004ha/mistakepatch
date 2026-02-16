@@ -1,0 +1,57 @@
+{
+  "score_total": 7.5,
+  "rubric_scores": {
+    "conditions": 1.5,
+    "modeling": 2.0,
+    "logic": 1.5,
+    "calculation": 1.5,
+    "final": 1.0
+  },
+  "mistakes": [
+    {
+      "type": "SIGN_ERROR",
+      "severity": "high",
+      "points_deducted": 1.0,
+      "evidence": "중간 전개에서 음수 부호가 양수로 바뀐 흔적이 보입니다.",
+      "fix_instruction": "두 번째 식 전개에서 부호를 유지해 다시 계산하세요.",
+      "location_hint": "두 번째 전개 줄",
+      "highlight": {
+        "mode": "tap",
+        "shape": "circle"
+      }
+    },
+    {
+      "type": "FINAL_FORM_ERROR",
+      "severity": "med",
+      "points_deducted": 0.5,
+      "evidence": "최종 답의 단위 또는 형태 확인이 누락되었습니다.",
+      "fix_instruction": "최종 답 옆에 단위와 간단한 타당성 확인 문장을 추가하세요.",
+      "location_hint": "마지막 답 줄",
+      "highlight": {
+        "mode": "tap",
+        "shape": "circle"
+      }
+    }
+  ],
+  "patch": {
+    "minimal_changes": [
+      {
+        "change": "2번째 줄 전개에서 -2ab를 +2ab로 바꾸지 말고 유지",
+        "rationale": "부호 오류가 이후 계산 전체를 바꿉니다."
+      },
+      {
+        "change": "최종 답에 단위/형태 체크를 한 줄 추가",
+        "rationale": "마무리 검증 누락으로 감점이 발생했습니다."
+      }
+    ],
+    "patched_solution_brief": "전개 부호와 마지막 단위 표기만 수정하면 풀이 흐름은 그대로 유지됩니다."
+  },
+  "next_checklist": [
+    "전개 후 부호 재확인",
+    "최종 줄 단위 확인",
+    "조건 누락 여부 점검"
+  ],
+  "confidence": 0.66,
+  "missing_info": []
+}
+

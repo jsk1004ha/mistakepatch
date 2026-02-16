@@ -1,0 +1,309 @@
+:root {
+  --bg: #f0efe8;
+  --panel: #fffdf8;
+  --ink: #141412;
+  --muted: #5c5b56;
+  --line: #d9d4c7;
+  --accent: #0f6e5e;
+  --warn: #9e2a2b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: radial-gradient(circle at top right, #fff8e6, var(--bg) 45%);
+  color: var(--ink);
+  font-family: "Pretendard", "Noto Sans KR", sans-serif;
+}
+
+.shell {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 24px;
+  display: grid;
+  gap: 20px;
+}
+
+header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.panel {
+  border: 1px solid var(--line);
+  background: var(--panel);
+  border-radius: 18px;
+  padding: 16px;
+  display: grid;
+  gap: 12px;
+  box-shadow: 0 8px 24px rgba(20, 20, 18, 0.06);
+}
+
+.topGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.uploadForm {
+  display: grid;
+  gap: 10px;
+}
+
+label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.95rem;
+}
+
+input[type="file"],
+select,
+button {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.inlineGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.resultPanel {
+  gap: 14px;
+}
+
+.resultHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.status {
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  text-transform: uppercase;
+  font-size: 0.75rem;
+  letter-spacing: 0.06em;
+}
+
+.status.done {
+  border-color: #3e8d63;
+  color: #1f663f;
+}
+
+.status.failed {
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+.resultGrid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr;
+  gap: 14px;
+}
+
+.scoreCard {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f3f8f6;
+  border: 1px solid #d8e7df;
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.imageWrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.imageWrap img {
+  width: 100%;
+  display: block;
+}
+
+.overlay {
+  position: absolute;
+  border: 3px solid #d86937;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  box-shadow: 0 0 0 3px rgba(216, 105, 55, 0.2);
+}
+
+.overlay.circle {
+  border-radius: 999px;
+}
+
+.overlay.box {
+  border-radius: 8px;
+}
+
+.overlay.selected {
+  animation: blink 0.8s ease-in-out 2;
+}
+
+@keyframes blink {
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+.tabRow {
+  display: flex;
+  gap: 8px;
+}
+
+.tabRow button {
+  flex: 1;
+}
+
+.tabRow button.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
+.cardList {
+  display: grid;
+  gap: 8px;
+}
+
+.mistakeCard {
+  text-align: left;
+  display: grid;
+  gap: 8px;
+}
+
+.mistakeCard.active {
+  border-color: #d86937;
+  background: #fff7f3;
+}
+
+.cardTop {
+  display: flex;
+  justify-content: space-between;
+}
+
+.fixText {
+  color: var(--muted);
+}
+
+.patchBox {
+  display: grid;
+  gap: 8px;
+}
+
+.patchItem {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 10px;
+  background: #f9f8f4;
+  display: grid;
+  gap: 6px;
+}
+
+.patchedBrief {
+  color: var(--muted);
+}
+
+.checklist {
+  margin: 0;
+  padding-left: 22px;
+  display: grid;
+  gap: 6px;
+}
+
+.historyList {
+  display: grid;
+  gap: 8px;
+}
+
+.historyItem {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  text-align: left;
+}
+
+.historyItem > div {
+  display: grid;
+  gap: 2px;
+}
+
+.topTagList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+
+.topTagList li {
+  display: flex;
+  justify-content: space-between;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+}
+
+.errorText {
+  color: var(--warn);
+}
+
+.warningText {
+  color: #93511f;
+}
+
+.okText {
+  color: #1f663f;
+}
+
+.hintText {
+  color: var(--muted);
+}
+
+@media (max-width: 1024px) {
+  .topGrid,
+  .resultGrid {
+    grid-template-columns: 1fr;
+  }
+}
+

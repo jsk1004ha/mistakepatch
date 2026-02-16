@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Node
+node_modules/
+.next/
+dist/
+
+# Runtime data
+backend/data/uploads/*
+!backend/data/uploads/.gitkeep
+backend/data/mistakepatch.db
+backend/data/test.db
+
+# Env
+.env
+backend/.env
+frontend/.env.local
+

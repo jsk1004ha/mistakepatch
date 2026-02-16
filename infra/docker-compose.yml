@@ -1,0 +1,42 @@
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  backend:
+    build:
+      context: ..
+      dockerfile: infra/backend.Dockerfile
+    env_file:
+      - ../backend/.env
+    volumes:
+      - ../backend/data:/app/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - redis
+
+  worker:
+    build:
+      context: ..
+      dockerfile: infra/backend.Dockerfile
+    command: rq worker mistakepatch --url ${REDIS_URL:-redis://redis:6379/0}
+    env_file:
+      - ../backend/.env
+    volumes:
+      - ../backend/data:/app/data
+    depends_on:
+      - redis
+      - backend
+
+  frontend:
+    build:
+      context: ..
+      dockerfile: infra/frontend.Dockerfile
+    environment:
+      - NEXT_PUBLIC_API_BASE_URL=http://localhost:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
