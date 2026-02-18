@@ -39,6 +39,7 @@ export function FloatingFeedback({
   const result = analysis?.result ?? null;
   const mistakes = result?.mistakes ?? [];
   const selectedMistake = mistakes[selectedIndex];
+  const isLikelyCorrect = Boolean(result && mistakes.length === 0 && result.score_total >= 9.5);
 
   return (
     <aside className={`floatingFeedback ${collapsed ? "collapsed" : ""}`}>
@@ -63,6 +64,9 @@ export function FloatingFeedback({
                 <strong>{result.score_total.toFixed(1)} / 10</strong>
                 <span>confidence {(result.confidence * 100).toFixed(0)}%</span>
               </div>
+              {isLikelyCorrect && (
+                <p className="okText">정답으로 판단했습니다. (자동 감점 포인트 없음)</p>
+              )}
 
               {analysis?.fallback_used && (
                 <p className="warningText">
@@ -97,6 +101,9 @@ export function FloatingFeedback({
 
               {activeTab === "mistakes" && (
                 <div className="cardList compact">
+                  {mistakes.length === 0 && (
+                    <p className="hintText">감점 포인트를 찾지 못했습니다. 현재 풀이는 정답으로 판단됩니다.</p>
+                  )}
                   {mistakes.map((mistake, index) => (
                     <button
                       key={mistake.mistake_id ?? `${mistake.type}-${index}`}

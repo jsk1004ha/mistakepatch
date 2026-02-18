@@ -33,7 +33,7 @@ ANALYSIS_RESULT_JSON_SCHEMA: dict = {
         },
         "mistakes": {
             "type": "array",
-            "minItems": 1,
+            "minItems": 0,
             "maxItems": 20,
             "items": {
                 "type": "object",
@@ -116,4 +116,3 @@ Always output valid JSON following the provided schema.
 Prefer minimal patch instructions over long explanations.
 If image quality is low, reduce confidence and fill missing_info.
 """.strip()
-

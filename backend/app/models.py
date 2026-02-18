@@ -101,7 +101,7 @@ class AnalysisResult(BaseModel):
 
     score_total: confloat(ge=0, le=10)
     rubric_scores: RubricScores
-    mistakes: conlist(Mistake, min_length=1, max_length=20)
+    mistakes: conlist(Mistake, min_length=0, max_length=20)
     patch: Patch
     next_checklist: conlist(str, min_length=1, max_length=3)
     confidence: confloat(ge=0, le=1)
@@ -115,6 +115,14 @@ class AnalyzeStatus(str, Enum):
     failed = "failed"
 
 
+class ProgressStep(str, Enum):
+    upload_complete = "upload_complete"
+    ocr_analyzing = "ocr_analyzing"
+    ai_grading = "ai_grading"
+    completed = "completed"
+    failed = "failed"
+
+
 class AnalyzeResponse(BaseModel):
     analysis_id: str
     status: AnalyzeStatus
@@ -125,6 +133,9 @@ class AnalyzeDetailResponse(BaseModel):
     analysis_id: str
     submission_id: str
     status: AnalyzeStatus
+    progress_step: ProgressStep
+    progress_percent: int = Field(ge=0, le=100)
+    progress_message: str | None = None
     subject: Subject
     solution_image_url: str
     problem_image_url: str | None = None

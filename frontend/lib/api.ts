@@ -23,6 +23,10 @@ export function toAbsoluteImageUrl(relativePath: string): string {
   return `${API_BASE_URL}${relativePath}`;
 }
 
+export function getAnalysisEventsUrl(analysisId: string): string {
+  return `${API_BASE_URL}/api/v1/analysis/${analysisId}/events`;
+}
+
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,

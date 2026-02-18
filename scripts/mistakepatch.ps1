@@ -27,10 +27,11 @@ if ($Mode -eq 'help') {
 }
 
 # Preconditions
-$PythonExe = Join-Path $BackendDir ".venv\Scripts\python.exe"
+$PythonExe = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 if (-not (Test-Path $PythonExe)) {
-    Write-Error "Backend virtual environment not found at $PythonExe."
-    Write-Host "Please run 'python -m venv .venv' and 'pip install -r requirements.txt' in the backend directory."
+    Write-Error "Project virtual environment not found at $PythonExe."
+    Write-Host "Please run 'python -m venv .venv' in repo root and install backend deps:"
+    Write-Host "  .\\.venv\\Scripts\\python -m pip install -r backend\\requirements.txt"
     exit 1
 }
 

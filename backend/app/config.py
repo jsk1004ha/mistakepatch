@@ -43,6 +43,9 @@ class Settings:
     openai_project: str | None
     openai_model: str
     openai_timeout_seconds: int
+    groq_api_key: str | None
+    groq_model: str
+    groq_base_url: str
     enable_ocr_hints: bool
     use_redis_queue: bool
     redis_url: str
@@ -86,6 +89,9 @@ class Settings:
             openai_project=os.getenv("OPENAI_PROJECT"),
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             openai_timeout_seconds=int(os.getenv("OPENAI_TIMEOUT_SECONDS", "25")),
+            groq_api_key=os.getenv("GROQ_API_KEY"),
+            groq_model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
+            groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
             enable_ocr_hints=_to_bool(os.getenv("ENABLE_OCR_HINTS"), default=False),
             use_redis_queue=_to_bool(os.getenv("USE_REDIS_QUEUE"), default=False),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),

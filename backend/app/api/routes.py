@@ -1,10 +1,14 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import StreamingResponse
 
 from ..config import settings
 from ..models import (
@@ -15,6 +19,7 @@ from ..models import (
     AnnotationResponse,
     HealthResponse,
     HistoryResponse,
+    ProgressStep,
 )
 from ..repositories import (
     create_analysis,
@@ -50,6 +55,36 @@ def _save_upload(upload: UploadFile) -> str:
     target_path.parent.mkdir(parents=True, exist_ok=True)
     target_path.write_bytes(payload)
     return str(target_path.resolve())
+
+
+def _parse_timestamp(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=UTC)
+        return parsed
+    except ValueError:
+        return None
+
+
+def _progress_for_record(record: dict[str, Any]) -> tuple[ProgressStep, int, str]:
+    status = record["status"]
+    if status == "queued":
+        return ProgressStep.upload_complete, 20, "이미지 업로드 완료"
+    if status == "processing":
+        updated_at = _parse_timestamp(record.get("updated_at"))
+        now = datetime.now(UTC)
+        elapsed_seconds = max(0.0, (now - updated_at).total_seconds()) if updated_at else 0.0
+        if elapsed_seconds < 3:
+            percent = min(58, 35 + int(elapsed_seconds * 8))
+            return ProgressStep.ocr_analyzing, percent, "OCR 분석 중"
+        percent = min(96, 58 + int((elapsed_seconds - 3) * 4))
+        return ProgressStep.ai_grading, percent, "AI 채점 중"
+    if status == "done":
+        return ProgressStep.completed, 100, "분석 완료"
+    return ProgressStep.failed, 100, "분석 실패"
 
 
 @router.post("/analyze", response_model=AnalyzeResponse)
@@ -103,6 +138,7 @@ async def analysis_detail(analysis_id: str) -> AnalyzeDetailResponse:
     if not record:
         raise HTTPException(status_code=404, detail="Analysis not found.")
 
+    progress_step, progress_percent, progress_message = _progress_for_record(record)
     solution_image_url = f"/uploads/{Path(record['solution_img_path']).name}"
     problem_image_url = (
         f"/uploads/{Path(record['problem_img_path']).name}" if record.get("problem_img_path") else None
@@ -112,6 +148,9 @@ async def analysis_detail(analysis_id: str) -> AnalyzeDetailResponse:
         analysis_id=record["analysis_id"],
         submission_id=record["submission_id"],
         status=record["status"],
+        progress_step=progress_step,
+        progress_percent=progress_percent,
+        progress_message=progress_message,
         subject=record["subject"],
         solution_image_url=solution_image_url,
         problem_image_url=problem_image_url,
@@ -120,6 +159,50 @@ async def analysis_detail(analysis_id: str) -> AnalyzeDetailResponse:
         error_code=record["error_code"],
         created_at=record["created_at"],
         updated_at=record["updated_at"],
+    )
+
+
+@router.get("/analysis/{analysis_id}/events")
+async def analysis_events(analysis_id: str) -> StreamingResponse:
+    initial = get_analysis(analysis_id)
+    if not initial:
+        raise HTTPException(status_code=404, detail="Analysis not found.")
+
+    async def event_stream():
+        last_fingerprint: tuple[str, str | None, ProgressStep, int] | None = None
+        while True:
+            record = get_analysis(analysis_id)
+            if not record:
+                break
+
+            progress_step, progress_percent, progress_message = _progress_for_record(record)
+            fingerprint = (record["status"], record.get("updated_at"), progress_step, progress_percent)
+            if fingerprint != last_fingerprint:
+                payload = {
+                    "analysis_id": record["analysis_id"],
+                    "status": record["status"],
+                    "progress_step": progress_step.value,
+                    "progress_percent": progress_percent,
+                    "progress_message": progress_message,
+                    "updated_at": record["updated_at"],
+                }
+                yield f"data: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                last_fingerprint = fingerprint
+
+            if record["status"] in {"done", "failed"}:
+                break
+
+            yield ": ping\n\n"
+            await asyncio.sleep(1.0)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

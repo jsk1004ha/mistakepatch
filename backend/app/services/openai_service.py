@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import mimetypes
+import re
 from pathlib import Path
 from typing import Any
 
@@ -26,15 +27,33 @@ class OpenAIService:
                 "openai package is not installed or failed to import. "
                 f"Reason: {reason}. Install backend dependencies first."
             )
-        if not settings.openai_api_key:
-            raise RuntimeError("OPENAI_API_KEY is not configured.")
-        self._client = OpenAI(
-            api_key=settings.openai_api_key,
-            organization=settings.openai_organization or None,
-            project=settings.openai_project or None,
-            timeout=settings.openai_timeout_seconds,
-        )
-        self._supports_responses_api = hasattr(self._client, "responses")
+
+        if settings.openai_api_key:
+            self._provider = "openai"
+            self._model = settings.openai_model
+            self._client = OpenAI(
+                api_key=settings.openai_api_key,
+                organization=settings.openai_organization or None,
+                project=settings.openai_project or None,
+                timeout=settings.openai_timeout_seconds,
+            )
+            self._supports_responses_api = hasattr(self._client, "responses")
+            return
+
+        if settings.groq_api_key:
+            self._provider = "groq"
+            configured_model = (settings.groq_model or "").strip()
+            self._model = configured_model or "llama-3.1-8b-instant"
+            self._client = OpenAI(
+                api_key=settings.groq_api_key,
+                base_url=settings.groq_base_url,
+                timeout=settings.openai_timeout_seconds,
+            )
+            # Groq uses the OpenAI-compatible Chat API, not Responses API.
+            self._supports_responses_api = False
+            return
+
+        raise RuntimeError("Neither OPENAI_API_KEY nor GROQ_API_KEY is configured.")
 
     def analyze_solution(
         self,
@@ -63,7 +82,7 @@ class OpenAIService:
     def _request(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         if self._supports_responses_api:
             response = self._client.responses.create(
-                model=settings.openai_model,
+                model=self._model,
                 input=messages,
                 text={
                     "format": {
@@ -75,22 +94,106 @@ class OpenAIService:
                 },
             )
         else:
-            response = self._client.chat.completions.create(
-                model=settings.openai_model,
-                messages=messages,
-                response_format={
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": "analysis_result",
-                        "schema": ANALYSIS_RESULT_JSON_SCHEMA,
-                        "strict": True,
+            if self._provider == "groq":
+                response = self._request_with_groq(messages)
+            else:
+                response = self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    response_format={
+                        "type": "json_schema",
+                        "json_schema": {
+                            "name": "analysis_result",
+                            "schema": ANALYSIS_RESULT_JSON_SCHEMA,
+                            "strict": True,
+                        },
                     },
-                },
-            )
+                )
         parsed = self._extract_json(response)
         if parsed is None:
             raise RuntimeError("Model response did not contain valid JSON.")
         return parsed
+
+    def _request_with_groq(self, messages: list[dict[str, Any]]) -> Any:
+        # Prefer JSON-mode for Groq. If the model requires string-only content,
+        # convert multimodal message arrays to a text-compatible fallback and retry.
+        try:
+            return self._client.chat.completions.create(
+                model=self._model,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+        except Exception as exc:
+            if not self._should_retry_with_text_messages(exc):
+                return self._client.chat.completions.create(
+                    model=self._model,
+                    messages=messages,
+                    temperature=0.1,
+                )
+
+        compatible_messages = self._to_text_only_messages(messages)
+        try:
+            return self._client.chat.completions.create(
+                model=self._model,
+                messages=compatible_messages,
+                response_format={"type": "json_object"},
+                temperature=0.1,
+            )
+        except Exception:
+            return self._client.chat.completions.create(
+                model=self._model,
+                messages=compatible_messages,
+                temperature=0.1,
+            )
+
+    @staticmethod
+    def _should_retry_with_text_messages(exc: Exception) -> bool:
+        message = str(exc).lower()
+        retry_hints = (
+            "content must be a string",
+            "messages[1].content",
+            "invalid image",
+            "image_url",
+            "unsupported content",
+        )
+        return any(hint in message for hint in retry_hints)
+
+    @staticmethod
+    def _to_text_only_messages(messages: list[dict[str, Any]]) -> list[dict[str, str]]:
+        normalized: list[dict[str, str]] = []
+        for message in messages:
+            role = str(message.get("role") or "user")
+            content = message.get("content")
+            if isinstance(content, str):
+                normalized.append({"role": role, "content": content})
+                continue
+
+            if not isinstance(content, list):
+                normalized.append({"role": role, "content": ""})
+                continue
+
+            parts: list[str] = []
+            image_count = 0
+            for item in content:
+                if not isinstance(item, dict):
+                    continue
+                item_type = item.get("type")
+                if item_type in {"text", "input_text"}:
+                    text = item.get("text")
+                    if isinstance(text, str) and text.strip():
+                        parts.append(text.strip())
+                    continue
+                if item_type in {"image_url", "input_image"}:
+                    image_count += 1
+
+            if image_count > 0:
+                parts.append(
+                    f"[첨부 이미지 {image_count}개: 현재 Groq 호환 모드에서 직접 시각 입력이 제한되어 텍스트 컨텍스트 기반으로 처리]"
+                )
+
+            normalized.append({"role": role, "content": "\n".join(parts).strip()})
+        return normalized
 
     def _build_responses_input(
         self,
@@ -160,10 +263,9 @@ class OpenAIService:
             return output_parsed
 
         if hasattr(response, "output_text") and response.output_text:
-            try:
-                return json.loads(response.output_text)
-            except json.JSONDecodeError:
-                pass
+            parsed_output_text = OpenAIService._parse_json_text(response.output_text)
+            if parsed_output_text is not None:
+                return parsed_output_text
 
         output = getattr(response, "output", None)
         if output:
@@ -178,10 +280,9 @@ class OpenAIService:
                     text = getattr(content, "text", None)
                     if not text:
                         continue
-                    try:
-                        return json.loads(text)
-                    except json.JSONDecodeError:
-                        continue
+                    parsed_text = OpenAIService._parse_json_text(text)
+                    if parsed_text is not None:
+                        return parsed_text
 
         choices = getattr(response, "choices", None)
         if choices:
@@ -203,10 +304,7 @@ class OpenAIService:
     @staticmethod
     def _parse_json_content(content: Any) -> dict[str, Any] | None:
         if isinstance(content, str):
-            try:
-                return json.loads(content)
-            except json.JSONDecodeError:
-                return None
+            return OpenAIService._parse_json_text(content)
 
         if not isinstance(content, list):
             return None
@@ -215,8 +313,39 @@ class OpenAIService:
             text = item.get("text") if isinstance(item, dict) else getattr(item, "text", None)
             if not text:
                 continue
+            parsed_text = OpenAIService._parse_json_text(text)
+            if parsed_text is not None:
+                return parsed_text
+        return None
+
+    @staticmethod
+    def _parse_json_text(text: str) -> dict[str, Any] | None:
+        raw = text.strip()
+        if not raw:
+            return None
+
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else None
+        except json.JSONDecodeError:
+            pass
+
+        fenced = re.search(r"```(?:json)?\s*(\{[\s\S]*\})\s*```", raw, flags=re.IGNORECASE)
+        if fenced:
+            block = fenced.group(1)
             try:
-                return json.loads(text)
+                parsed = json.loads(block)
+                return parsed if isinstance(parsed, dict) else None
             except json.JSONDecodeError:
-                continue
+                pass
+
+        start = raw.find("{")
+        end = raw.rfind("}")
+        if start >= 0 and end > start:
+            snippet = raw[start : end + 1]
+            try:
+                parsed = json.loads(snippet)
+                return parsed if isinstance(parsed, dict) else None
+            except json.JSONDecodeError:
+                return None
         return None

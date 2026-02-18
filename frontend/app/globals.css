@@ -106,6 +106,13 @@ button:disabled {
   background: #f6f8f9;
 }
 
+.toolToggle.active {
+  background: #e7f4ef;
+  border-color: #91bfac;
+  color: #0b7b5f;
+  font-weight: 600;
+}
+
 .workspace {
   position: relative;
   background: #dbe4ea;
@@ -157,6 +164,10 @@ button:disabled {
   display: block;
   touch-action: none;
   cursor: crosshair;
+}
+
+.noteCanvas.eraserMode {
+  cursor: cell;
 }
 
 .noteCanvas.annotationMode {
@@ -571,6 +582,299 @@ button:disabled {
   font-size: 0.9rem;
 }
 
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 14px;
+}
+
+.resultPanel {
+  display: grid;
+  gap: 12px;
+}
+
+.resultHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.status {
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.82rem;
+  border: 1px solid var(--line);
+  text-transform: uppercase;
+}
+
+.status.queued {
+  background: #f7f9fa;
+  color: #51606f;
+}
+
+.status.processing {
+  background: #f2f8ff;
+  color: #1766b0;
+  border-color: #b7d8f3;
+}
+
+.status.done {
+  background: #eefbf5;
+  color: #0f7a5b;
+  border-color: #b8e3d1;
+}
+
+.status.failed {
+  background: #fdf1f1;
+  color: #9b2f2f;
+  border-color: #e6c0c0;
+}
+
+.analysisProgressCard {
+  border: 1px solid #d6e2ea;
+  border-radius: 12px;
+  padding: 12px;
+  display: grid;
+  gap: 10px;
+  background: #f9fcfd;
+}
+
+.analysisProgressTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.progressTrack {
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: #e8eff4;
+  overflow: hidden;
+}
+
+.progressTrack span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #5fa8d4 0%, #0b7b5f 100%);
+  transition: width 0.3s ease;
+}
+
+.stepIndicator {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.stepIndicator li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82rem;
+  color: var(--muted);
+}
+
+.stepIndicator li.active {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.stepIndicator li.done {
+  color: #0f7a5b;
+}
+
+.stepDot {
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  border: 2px solid #bccbd6;
+  background: #fff;
+  flex-shrink: 0;
+}
+
+.stepIndicator li.active .stepDot,
+.stepIndicator li.done .stepDot {
+  border-color: #0b7b5f;
+  background: #0b7b5f;
+}
+
+.resultGrid {
+  display: grid;
+  grid-template-columns: minmax(300px, 1.15fr) minmax(260px, 1fr);
+  gap: 12px;
+}
+
+.imagePane {
+  display: grid;
+  gap: 10px;
+}
+
+.scoreCard {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid #d3e5dc;
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: #f4fbf7;
+}
+
+.imageWrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #f7fafc;
+}
+
+.analysisImage {
+  width: 100%;
+  height: auto;
+  display: block;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-drag: none;
+}
+
+.overlay,
+.compareRegion {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.overlay {
+  border: 2px solid #eb6637;
+  box-shadow: 0 0 0 2px rgba(235, 102, 55, 0.2);
+}
+
+.overlay.circle {
+  border-radius: 999px;
+}
+
+.overlay.box {
+  border-radius: 8px;
+}
+
+.overlay.selected {
+  animation: blink 0.8s ease-in-out 2;
+}
+
+.compareRegion {
+  border: 2px dashed;
+}
+
+.compareRegion.mistake {
+  border-color: rgba(188, 69, 69, 0.65);
+  background: rgba(188, 69, 69, 0.14);
+}
+
+.compareRegion.patch {
+  border-color: rgba(32, 136, 98, 0.75);
+  background: rgba(32, 136, 98, 0.2);
+}
+
+.compareCallout {
+  position: absolute;
+  transform: translateY(-50%);
+  max-width: min(70%, 290px);
+  border: 1px solid #d7e4ec;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 10px 20px rgba(25, 35, 45, 0.14);
+  padding: 8px;
+  display: grid;
+  gap: 5px;
+  pointer-events: none;
+}
+
+.compareTag {
+  width: fit-content;
+  border-radius: 999px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+}
+
+.compareTag.mistake {
+  background: #fbeaea;
+  color: #8d2d2d;
+}
+
+.compareTag.patch {
+  background: #e7f8ef;
+  color: #0f6e4a;
+}
+
+.compareText {
+  margin: 0;
+  font-size: 0.82rem;
+  line-height: 1.4;
+  transition: opacity 0.2s ease;
+}
+
+.compareText.mistake {
+  color: #702626;
+}
+
+.compareText.patch {
+  color: #0c5f40;
+}
+
+.compareRationale {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.detailPane {
+  display: grid;
+  gap: 10px;
+}
+
+.fixText {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.compareControls {
+  display: flex;
+  gap: 6px;
+}
+
+.compareControls button {
+  flex: 1;
+}
+
+.compareControls button.active {
+  border-color: var(--primary);
+  background: #eefbf7;
+  color: #0b6d53;
+}
+
+.compareRange {
+  display: grid;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.patchedBrief {
+  border: 1px solid #d8e0e6;
+  background: #f7fafc;
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 0.9rem;
+}
+
 
 @media (max-width: 980px) {
   .workspace {
@@ -592,6 +896,21 @@ button:disabled {
     position: static;
     width: 100%;
     margin-top: 12px;
+  }
+
+  .resultGrid {
+    grid-template-columns: 1fr;
+  }
+
+  .stepIndicator {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .compareCallout {
+    position: static;
+    transform: none;
+    max-width: none;
+    margin: 8px;
   }
 }
 

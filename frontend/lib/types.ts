@@ -1,5 +1,6 @@
 export type Subject = "math" | "physics";
 export type AnalyzeStatus = "queued" | "processing" | "done" | "failed";
+export type ProgressStep = "upload_complete" | "ocr_analyzing" | "ai_grading" | "completed" | "failed";
 export type HighlightMode = "tap" | "ocr_box" | "region_box";
 export type HighlightShape = "circle" | "box";
 export type Severity = "low" | "med" | "high";
@@ -74,6 +75,9 @@ export interface AnalysisDetail {
   analysis_id: string;
   submission_id: string;
   status: AnalyzeStatus;
+  progress_step?: ProgressStep;
+  progress_percent?: number;
+  progress_message?: string | null;
   subject: Subject;
   solution_image_url: string;
   problem_image_url: string | null;
@@ -81,6 +85,15 @@ export interface AnalysisDetail {
   fallback_used: boolean;
   error_code: string | null;
   created_at: string;
+  updated_at: string;
+}
+
+export interface AnalysisProgressEvent {
+  analysis_id: string;
+  status: AnalyzeStatus;
+  progress_step: ProgressStep;
+  progress_percent: number;
+  progress_message: string | null;
   updated_at: string;
 }
 
@@ -108,4 +121,3 @@ export interface HistoryResponse {
   items: HistoryItem[];
   top_tags: Array<{ type: MistakeType; count: number }>;
 }
-

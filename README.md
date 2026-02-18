@@ -17,12 +17,12 @@ MistakePatch is a grading-oriented mistake notebook for handwritten math/physics
 ## Local Run
 1. Backend
 ```bash
-cd backend
 python -m venv .venv
 . .venv/Scripts/activate  # PowerShell: .venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-copy .env.example .env
-uvicorn app.main:app --reload --port 8000
+pip install -r backend/requirements.txt
+copy backend/.env.example backend/.env
+cd backend
+..\.venv\Scripts\python -m uvicorn app.main:app --reload --port 8000
 ```
 
 2. Frontend
@@ -38,18 +38,20 @@ npm run dev
 - Backend health: `http://localhost:8000/api/v1/health`
 
 ## Environment Variables (Backend)
-- `OPENAI_API_KEY`: required for live model calls
+- `OPENAI_API_KEY`: primary key for live model calls (preferred)
 - `OPENAI_ORGANIZATION`: optional; force billing org to avoid wrong default org
 - `OPENAI_PROJECT`: optional; force billing project to avoid wrong default project
 - `OPENAI_MODEL`: default `gpt-4o-mini`
+- `GROQ_API_KEY`: optional fallback key used only when `OPENAI_API_KEY` is empty
+- `GROQ_MODEL`: fallback model for Groq (default `llama-3.1-8b-instant`)
+- `GROQ_BASE_URL`: default `https://api.groq.com/openai/v1`
 - `ENABLE_OCR_HINTS`: `true/false` (default false)
 - `USE_REDIS_QUEUE`: `true/false` (default false)
 - `REDIS_URL`: default `redis://localhost:6379/0`
 
 ## Test
 ```bash
-cd backend
-python -m pytest tests -q
+.\.venv\Scripts\python -m pytest backend/tests -q
 ```
 
 ## API Summary

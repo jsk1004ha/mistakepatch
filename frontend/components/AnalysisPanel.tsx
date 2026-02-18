@@ -1,16 +1,57 @@
 "use client";
 
-import { useMemo, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+  type TouchEvent,
+} from "react";
 
-import { toAbsoluteImageUrl } from "@/lib/api";
-import type { AnalysisDetail, AnnotationPayload, Mistake } from "@/lib/types";
+import { getAnalysisEventsUrl, toAbsoluteImageUrl } from "@/lib/api";
+import type {
+  AnalysisDetail,
+  AnalysisProgressEvent,
+  AnnotationPayload,
+  Mistake,
+  ProgressStep,
+} from "@/lib/types";
 
 type ResultTab = "mistakes" | "patch" | "checklist";
+type CompareMode = "slider" | "overlay";
 
 interface AnalysisPanelProps {
   analysis: AnalysisDetail;
   onReload: () => Promise<void>;
   onCreateAnnotation: (payload: AnnotationPayload) => Promise<void>;
+}
+
+interface ProgressViewState {
+  step: ProgressStep;
+  percent: number;
+  message: string;
+}
+
+const STEP_SEQUENCE: Array<{ step: Exclude<ProgressStep, "failed">; label: string }> = [
+  { step: "upload_complete", label: "이미지 업로드 완료" },
+  { step: "ocr_analyzing", label: "OCR 분석 중" },
+  { step: "ai_grading", label: "AI 채점 중" },
+  { step: "completed", label: "완료" },
+];
+
+const STEP_LABEL: Record<ProgressStep, string> = {
+  upload_complete: "이미지 업로드 완료",
+  ocr_analyzing: "OCR 분석 중",
+  ai_grading: "AI 채점 중",
+  completed: "분석 완료",
+  failed: "분석 실패",
+};
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
 }
 
 function hasBox(mistake: Mistake): boolean {
@@ -40,16 +81,138 @@ function getFallbackHint(errorCode: string | null): string | null {
   return null;
 }
 
+function isProgressStep(value: unknown): value is ProgressStep {
+  return (
+    value === "upload_complete" ||
+    value === "ocr_analyzing" ||
+    value === "ai_grading" ||
+    value === "completed" ||
+    value === "failed"
+  );
+}
+
+function parseProgressEvent(rawData: string): AnalysisProgressEvent | null {
+  try {
+    const parsed: unknown = JSON.parse(rawData);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    const record = parsed as Record<string, unknown>;
+    const analysisId = record.analysis_id;
+    const status = record.status;
+    const step = record.progress_step;
+    const percent = record.progress_percent;
+    const updatedAt = record.updated_at;
+
+    if (typeof analysisId !== "string") return null;
+    if (status !== "queued" && status !== "processing" && status !== "done" && status !== "failed") {
+      return null;
+    }
+    if (!isProgressStep(step)) return null;
+    if (typeof percent !== "number") return null;
+    if (typeof updatedAt !== "string") return null;
+
+    const messageValue = record.progress_message;
+    const message = typeof messageValue === "string" ? messageValue : null;
+
+    return {
+      analysis_id: analysisId,
+      status,
+      progress_step: step,
+      progress_percent: percent,
+      progress_message: message,
+      updated_at: updatedAt,
+    };
+  } catch {
+    return null;
+  }
+}
+
+function resolveProgressState(
+  analysis: AnalysisDetail,
+  tick: number,
+  liveEvent: AnalysisProgressEvent | null,
+): ProgressViewState {
+  if (liveEvent && liveEvent.analysis_id === analysis.analysis_id) {
+    return {
+      step: liveEvent.progress_step,
+      percent: clamp(Math.round(liveEvent.progress_percent), 0, 100),
+      message: liveEvent.progress_message ?? STEP_LABEL[liveEvent.progress_step],
+    };
+  }
+
+  if (analysis.progress_step && typeof analysis.progress_percent === "number") {
+    return {
+      step: analysis.progress_step,
+      percent: clamp(Math.round(analysis.progress_percent), 0, 100),
+      message: analysis.progress_message ?? STEP_LABEL[analysis.progress_step],
+    };
+  }
+
+  if (analysis.status === "done") {
+    return {
+      step: "completed",
+      percent: 100,
+      message: analysis.progress_message ?? STEP_LABEL.completed,
+    };
+  }
+
+  if (analysis.status === "failed") {
+    return {
+      step: "failed",
+      percent: 100,
+      message: analysis.progress_message ?? STEP_LABEL.failed,
+    };
+  }
+
+  if (analysis.status === "queued") {
+    return {
+      step: "upload_complete",
+      percent: clamp(14 + tick * 2, 12, 30),
+      message: STEP_LABEL.upload_complete,
+    };
+  }
+
+  if (tick < 4) {
+    return {
+      step: "ocr_analyzing",
+      percent: clamp(34 + tick * 6, 34, 58),
+      message: STEP_LABEL.ocr_analyzing,
+    };
+  }
+
+  return {
+    step: "ai_grading",
+    percent: clamp(58 + (tick - 4) * 3, 58, 96),
+    message: STEP_LABEL.ai_grading,
+  };
+}
+
 export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: AnalysisPanelProps) {
   const [activeTab, setActiveTab] = useState<ResultTab>("mistakes");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [compareMode, setCompareMode] = useState<CompareMode>("slider");
+  const [compareRatio, setCompareRatio] = useState(50);
+  const [overlayOpacity, setOverlayOpacity] = useState(70);
+  const [progressTick, setProgressTick] = useState(0);
+  const [liveProgress, setLiveProgress] = useState<AnalysisProgressEvent | null>(null);
+  const [isSseConnected, setIsSseConnected] = useState(false);
+  const [streamFallback, setStreamFallback] = useState(false);
+  const lastReloadTokenRef = useRef<string | null>(null);
 
   const result = analysis.result;
   const mistakes = result?.mistakes ?? [];
   const selectedMistake = mistakes[selectedIndex];
   const imageUrl = toAbsoluteImageUrl(analysis.solution_image_url);
   const fallbackHint = getFallbackHint(analysis.error_code);
+  const selectedPatchChange =
+    result?.patch.minimal_changes[selectedIndex] ?? result?.patch.minimal_changes[0] ?? null;
+  const patchPreviewText = selectedPatchChange?.change ?? selectedMistake?.fix_instruction ?? "";
+  const patchTextOpacity =
+    compareMode === "slider" ? clamp(compareRatio / 100, 0, 1) : clamp(overlayOpacity / 100, 0.1, 1);
+  const mistakeTextOpacity =
+    compareMode === "slider" ? clamp(1 - compareRatio / 100, 0.2, 1) : 0.95;
+  const isAnalyzing = !result && (analysis.status === "queued" || analysis.status === "processing");
 
   const overlays = useMemo(
     () =>
@@ -59,28 +222,167 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
     [mistakes],
   );
 
-  const handleImageClick = async (event: MouseEvent<HTMLImageElement>) => {
-    if (!selectedMistake || !selectedMistake.mistake_id) return;
-    if (selectedMistake.highlight.mode !== "tap") return;
-    if (hasBox(selectedMistake)) return;
+  const progressState = useMemo(
+    () => resolveProgressState(analysis, progressTick, liveProgress),
+    [analysis, liveProgress, progressTick],
+  );
+  const activeStep = progressState.step === "failed" ? "ai_grading" : progressState.step;
+  const activeStepIndex = STEP_SEQUENCE.findIndex((item) => item.step === activeStep);
 
-    const rect = event.currentTarget.getBoundingClientRect();
-    const x = (event.clientX - rect.left) / rect.width;
-    const y = (event.clientY - rect.top) / rect.height;
+  const selectedHighlightStyle = useMemo<CSSProperties | null>(() => {
+    if (!selectedMistake || !hasBox(selectedMistake)) return null;
+    const highlight = selectedMistake.highlight;
+    return {
+      left: `${(highlight.x ?? 0) * 100}%`,
+      top: `${(highlight.y ?? 0) * 100}%`,
+      width: `${(highlight.w ?? 0.12) * 100}%`,
+      height: `${(highlight.h ?? 0.12) * 100}%`,
+    };
+  }, [selectedMistake]);
 
-    await onCreateAnnotation({
-      analysis_id: analysis.analysis_id,
-      mistake_id: selectedMistake.mistake_id,
-      mode: "tap",
-      shape: "circle",
-      x: Number(x.toFixed(4)),
-      y: Number(y.toFixed(4)),
-      w: 0.12,
-      h: 0.12,
-    });
-    setNotice("하이라이트 위치를 저장했습니다.");
-    await onReload();
-  };
+  const compareCalloutStyle = useMemo<CSSProperties | null>(() => {
+    if (!selectedMistake || !hasBox(selectedMistake)) return null;
+    const highlight = selectedMistake.highlight;
+    const left = clamp(((highlight.x ?? 0.5) + (highlight.w ?? 0.12) * 0.55 + 0.02) * 100, 8, 77);
+    const top = clamp(((highlight.y ?? 0.5) - (highlight.h ?? 0.12) * 0.45) * 100, 7, 84);
+    return {
+      left: `${left}%`,
+      top: `${top}%`,
+    };
+  }, [selectedMistake]);
+
+  useEffect(() => {
+    setProgressTick(0);
+    setLiveProgress(null);
+    setIsSseConnected(false);
+    setStreamFallback(false);
+    lastReloadTokenRef.current = null;
+  }, [analysis.analysis_id]);
+
+  useEffect(() => {
+    if (selectedIndex < mistakes.length) return;
+    setSelectedIndex(Math.max(0, mistakes.length - 1));
+  }, [mistakes.length, selectedIndex]);
+
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const timer = window.setInterval(() => {
+      setProgressTick((prev) => prev + 1);
+    }, 900);
+    return () => window.clearInterval(timer);
+  }, [analysis.analysis_id, isAnalyzing]);
+
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    if (typeof window === "undefined" || typeof EventSource === "undefined") {
+      setStreamFallback(true);
+      return;
+    }
+
+    const stream = new EventSource(getAnalysisEventsUrl(analysis.analysis_id));
+    let closed = false;
+
+    stream.onopen = () => {
+      setIsSseConnected(true);
+      setStreamFallback(false);
+    };
+
+    stream.onmessage = (event) => {
+      const nextProgress = parseProgressEvent(event.data);
+      if (!nextProgress || nextProgress.analysis_id !== analysis.analysis_id) return;
+
+      setLiveProgress(nextProgress);
+
+      if (nextProgress.updated_at !== lastReloadTokenRef.current) {
+        lastReloadTokenRef.current = nextProgress.updated_at;
+        void onReload().catch(() => undefined);
+      }
+
+      if (nextProgress.status === "done" || nextProgress.status === "failed") {
+        stream.close();
+        closed = true;
+        setIsSseConnected(false);
+      }
+    };
+
+    stream.onerror = () => {
+      if (!closed) {
+        stream.close();
+        closed = true;
+      }
+      setIsSseConnected(false);
+      setStreamFallback(true);
+    };
+
+    return () => {
+      if (!closed) {
+        stream.close();
+      }
+      setIsSseConnected(false);
+    };
+  }, [analysis.analysis_id, isAnalyzing, onReload]);
+
+  useEffect(() => {
+    if (!isAnalyzing) return;
+    const intervalMs = isSseConnected ? 4200 : 1600;
+    const timer = window.setInterval(() => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void onReload().catch(() => undefined);
+    }, intervalMs);
+    return () => window.clearInterval(timer);
+  }, [analysis.analysis_id, isAnalyzing, isSseConnected, onReload]);
+
+  const handleAnnotationFromPoint = useCallback(
+    async (clientX: number, clientY: number, target: HTMLImageElement, isTouchInput: boolean) => {
+      if (!selectedMistake || !selectedMistake.mistake_id) return;
+      if (selectedMistake.highlight.mode !== "tap") return;
+      if (hasBox(selectedMistake)) return;
+
+      const rect = target.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return;
+
+      let x = clientX - rect.left;
+      let y = clientY - rect.top;
+
+      if (isTouchInput) {
+        const safetyPadding = Math.min(28, Math.max(12, Math.min(rect.width, rect.height) * 0.04));
+        x = clamp(x, safetyPadding, rect.width - safetyPadding);
+        y = clamp(y, safetyPadding, rect.height - safetyPadding);
+      }
+
+      await onCreateAnnotation({
+        analysis_id: analysis.analysis_id,
+        mistake_id: selectedMistake.mistake_id,
+        mode: "tap",
+        shape: "circle",
+        x: Number((x / rect.width).toFixed(4)),
+        y: Number((y / rect.height).toFixed(4)),
+        w: 0.12,
+        h: 0.12,
+      });
+      setNotice("하이라이트 위치를 저장했습니다.");
+      await onReload();
+    },
+    [analysis.analysis_id, onCreateAnnotation, onReload, selectedMistake],
+  );
+
+  const handleImageClick = useCallback(
+    async (event: MouseEvent<HTMLImageElement>) => {
+      if (event.button !== 0) return;
+      await handleAnnotationFromPoint(event.clientX, event.clientY, event.currentTarget, false);
+    },
+    [handleAnnotationFromPoint],
+  );
+
+  const handleImageTouchStart = useCallback(
+    async (event: TouchEvent<HTMLImageElement>) => {
+      if (event.touches.length === 0) return;
+      event.preventDefault();
+      const touch = event.touches[0];
+      await handleAnnotationFromPoint(touch.clientX, touch.clientY, event.currentTarget, true);
+    },
+    [handleAnnotationFromPoint],
+  );
 
   return (
     <section className="panel resultPanel">
@@ -99,7 +401,37 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
       )}
       {notice && <p className="okText">{notice}</p>}
 
-      {!result && <p>분석 중입니다. 자동으로 결과를 갱신합니다.</p>}
+      {!result && (
+        <div className="analysisProgressCard">
+          <div className="analysisProgressTop">
+            <strong>{progressState.message}</strong>
+            <span>{progressState.percent}%</span>
+          </div>
+          <div className="progressTrack">
+            <span style={{ width: `${progressState.percent}%` }} />
+          </div>
+          <ol className="stepIndicator">
+            {STEP_SEQUENCE.map((item, index) => (
+              <li
+                key={item.step}
+                className={`${index < activeStepIndex ? "done" : ""} ${
+                  index === activeStepIndex ? "active" : ""
+                }`}
+              >
+                <span className="stepDot" />
+                <span>{item.label}</span>
+              </li>
+            ))}
+          </ol>
+          <p className="hintText">
+            {isSseConnected
+              ? "실시간 진행 상태를 수신 중입니다."
+              : streamFallback
+                ? "SSE 연결이 없어 자동 폴링으로 상태를 갱신합니다."
+                : "분석 상태를 확인 중입니다."}
+          </p>
+        </div>
+      )}
       {result && (
         <div className="resultGrid">
           <div className="imagePane">
@@ -108,7 +440,13 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
               <span>confidence: {(result.confidence * 100).toFixed(0)}%</span>
             </div>
             <div className="imageWrap">
-              <img src={imageUrl} alt="solution" onClick={handleImageClick} />
+              <img
+                src={imageUrl}
+                alt="solution"
+                className="analysisImage"
+                onClick={handleImageClick}
+                onTouchStart={handleImageTouchStart}
+              />
               {overlays.map(({ mistake, index }) => {
                 const highlight = mistake.highlight;
                 return (
@@ -126,9 +464,36 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
                   />
                 );
               })}
+              {activeTab === "patch" && selectedHighlightStyle && (
+                <>
+                  <span className="compareRegion mistake" style={selectedHighlightStyle} />
+                  <span
+                    className="compareRegion patch"
+                    style={{
+                      ...selectedHighlightStyle,
+                      opacity: patchTextOpacity,
+                    }}
+                  />
+                </>
+              )}
+              {activeTab === "patch" && selectedMistake && hasBox(selectedMistake) && compareCalloutStyle && (
+                <div className="compareCallout" style={compareCalloutStyle}>
+                  <span className="compareTag mistake">Mistake</span>
+                  <p className="compareText mistake" style={{ opacity: mistakeTextOpacity }}>
+                    {selectedMistake.evidence}
+                  </p>
+                  <span className="compareTag patch">Patch</span>
+                  <p className="compareText patch" style={{ opacity: patchTextOpacity }}>
+                    {patchPreviewText}
+                  </p>
+                  {selectedPatchChange?.rationale && (
+                    <p className="compareRationale">{selectedPatchChange.rationale}</p>
+                  )}
+                </div>
+              )}
             </div>
             {selectedMistake && selectedMistake.highlight.mode === "tap" && !hasBox(selectedMistake) && (
-              <p className="hintText">선택된 감점 카드의 위치를 이미지에서 한 번 탭하세요.</p>
+              <p className="hintText">선택된 감점 카드의 위치를 이미지에서 탭하세요. (터치 보정 적용)</p>
             )}
           </div>
 
@@ -175,6 +540,53 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
 
             {activeTab === "patch" && (
               <div className="patchBox">
+                <div className="compareControls">
+                  <button
+                    className={compareMode === "slider" ? "active" : ""}
+                    onClick={() => setCompareMode("slider")}
+                  >
+                    Before / After
+                  </button>
+                  <button
+                    className={compareMode === "overlay" ? "active" : ""}
+                    onClick={() => setCompareMode("overlay")}
+                  >
+                    Overlay
+                  </button>
+                </div>
+                {compareMode === "slider" && (
+                  <label className="compareRange">
+                    Mistake ↔ Patch 슬라이더
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={compareRatio}
+                      onChange={(event) => setCompareRatio(Number(event.target.value))}
+                    />
+                  </label>
+                )}
+                {compareMode === "overlay" && (
+                  <label className="compareRange">
+                    Patch 오버레이 투명도
+                    <input
+                      type="range"
+                      min={10}
+                      max={100}
+                      value={overlayOpacity}
+                      onChange={(event) => setOverlayOpacity(Number(event.target.value))}
+                    />
+                  </label>
+                )}
+                {selectedMistake && hasBox(selectedMistake) ? (
+                  <p className="hintText">
+                    이미지 위 오버레이에서 Mistake와 Patch를 겹쳐 비교할 수 있습니다.
+                  </p>
+                ) : (
+                  <p className="hintText">
+                    비교 뷰를 쓰려면 감점 포인트 위치가 필요합니다. 감점 탭에서 항목을 선택하고 이미지를 탭하세요.
+                  </p>
+                )}
                 {result.patch.minimal_changes.map((change, index) => (
                   <div key={`${index}-${change.change}`} className="patchItem">
                     <strong>{change.change}</strong>
@@ -198,4 +610,3 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
     </section>
   );
 }
-

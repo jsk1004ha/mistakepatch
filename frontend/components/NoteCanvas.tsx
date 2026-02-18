@@ -24,6 +24,7 @@ interface CanvasOverlay {
 interface NoteCanvasProps {
   brushColor: string;
   brushSize: number;
+  eraserMode: boolean;
   overlays: CanvasOverlay[];
   annotationMode: boolean;
   onAnnotationTap: (point: { x: number; y: number }) => void;
@@ -32,6 +33,8 @@ interface NoteCanvasProps {
 export interface NoteCanvasHandle {
   exportAsFile: () => Promise<File | null>;
   clear: () => void;
+  undo: () => boolean;
+  redo: () => boolean;
 }
 
 interface StrokePoint {
@@ -47,6 +50,7 @@ interface StrokeRecord {
   color: string;
   baseSize: number;
   isPen: boolean;
+  isEraser: boolean;
   points: StrokePoint[];
 }
 
@@ -61,10 +65,12 @@ interface DrawSegment {
   from: StrokePoint;
   to: StrokePoint;
   color: string;
+  isEraser: boolean;
 }
 
 const MAX_POINTS_PER_STROKE = 600;
 const MIN_POINT_DISTANCE = 0.2;
+const CANVAS_BG_COLOR = "#fffdfb";
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
@@ -92,7 +98,7 @@ function createStrokeId() {
 }
 
 export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function NoteCanvas(
-  { brushColor, brushSize, overlays, annotationMode, onAnnotationTap },
+  { brushColor, brushSize, eraserMode, overlays, annotationMode, onAnnotationTap },
   ref,
 ) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -100,6 +106,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
   const ratioRef = useRef(1);
 
   const strokesRef = useRef<StrokeRecord[]>([]);
+  const redoStrokesRef = useRef<StrokeRecord[]>([]);
   const sessionRef = useRef<PointerSession | null>(null);
   const listenersAttachedRef = useRef(false);
 
@@ -108,6 +115,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
 
   const brushColorRef = useRef(brushColor);
   const brushSizeRef = useRef(brushSize);
+  const eraserModeRef = useRef(eraserMode);
   const annotationModeRef = useRef(annotationMode);
 
   const windowHandlersRef = useRef<{
@@ -118,8 +126,9 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
   useEffect(() => {
     brushColorRef.current = brushColor;
     brushSizeRef.current = brushSize;
+    eraserModeRef.current = eraserMode;
     annotationModeRef.current = annotationMode;
-  }, [annotationMode, brushColor, brushSize]);
+  }, [annotationMode, brushColor, brushSize, eraserMode]);
 
   const getContext = useCallback(() => {
     const canvas = canvasRef.current;
@@ -128,7 +137,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
   }, []);
 
   const drawBackground = useCallback((ctx: CanvasRenderingContext2D, width: number, height: number) => {
-    ctx.fillStyle = "#fffdfb";
+    ctx.fillStyle = CANVAS_BG_COLOR;
     ctx.fillRect(0, 0, width, height);
   }, []);
 
@@ -142,12 +151,15 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
     };
   }, []);
 
-  const drawDot = useCallback((ctx: CanvasRenderingContext2D, point: StrokePoint, color: string) => {
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, Math.max(point.width * 0.5, 0.8), 0, Math.PI * 2);
-    ctx.fill();
-  }, []);
+  const drawDot = useCallback(
+    (ctx: CanvasRenderingContext2D, point: StrokePoint, color: string, isEraser = false) => {
+      ctx.fillStyle = isEraser ? CANVAS_BG_COLOR : color;
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, Math.max(point.width * 0.5, 0.8), 0, Math.PI * 2);
+      ctx.fill();
+    },
+    [],
+  );
 
   const drawSegment = useCallback((ctx: CanvasRenderingContext2D, segment: DrawSegment) => {
     const from = segment.from;
@@ -157,12 +169,12 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
     const dist = Math.hypot(dx, dy);
 
     if (dist < 0.0001) {
-      drawDot(ctx, to, segment.color);
+      drawDot(ctx, to, segment.color, segment.isEraser);
       return;
     }
 
     const steps = Math.max(1, Math.ceil(dist / 1.2));
-    ctx.fillStyle = segment.color;
+    ctx.fillStyle = segment.isEraser ? CANVAS_BG_COLOR : segment.color;
 
     for (let i = 0; i <= steps; i += 1) {
       const t = i / steps;
@@ -206,12 +218,13 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
     for (const stroke of strokesRef.current) {
       const points = stroke.points;
       if (points.length === 0) continue;
-      drawDot(ctx, points[0], stroke.color);
+      drawDot(ctx, points[0], stroke.color, stroke.isEraser);
       for (let i = 1; i < points.length; i += 1) {
         drawSegment(ctx, {
           from: points[i - 1],
           to: points[i],
           color: stroke.color,
+          isEraser: stroke.isEraser,
         });
       }
     }
@@ -291,7 +304,12 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
       if (distance(prev, point) < MIN_POINT_DISTANCE) return;
 
       session.stroke.points.push(point);
-      drawQueueRef.current.push({ from: prev, to: point, color: session.stroke.color });
+      drawQueueRef.current.push({
+        from: prev,
+        to: point,
+        color: session.stroke.color,
+        isEraser: session.stroke.isEraser,
+      });
       scheduleFlush();
       session.lastPoint = point;
 
@@ -303,6 +321,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
           color: session.stroke.color,
           baseSize: session.stroke.baseSize,
           isPen: session.stroke.isPen,
+          isEraser: session.stroke.isEraser,
           points: [splitStart],
         };
         strokesRef.current.push(nextStroke);
@@ -419,13 +438,15 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
       color: brushColorRef.current,
       baseSize: brushSizeRef.current,
       isPen,
+      isEraser: eraserModeRef.current,
       points: [firstPoint],
     };
     strokesRef.current.push(stroke);
+    redoStrokesRef.current = [];
 
     const ctx = getContext();
     if (ctx) {
-      drawDot(ctx, firstPoint, stroke.color);
+      drawDot(ctx, firstPoint, stroke.color, stroke.isEraser);
     }
 
     sessionRef.current = {
@@ -454,6 +475,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
     clear: () => {
       stopSession();
       strokesRef.current = [];
+      redoStrokesRef.current = [];
       drawQueueRef.current.length = 0;
       if (rafRef.current !== null) {
         window.cancelAnimationFrame(rafRef.current);
@@ -461,13 +483,41 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
       }
       redrawFromModel();
     },
+    undo: () => {
+      stopSession();
+      if (strokesRef.current.length === 0) return false;
+      drawQueueRef.current.length = 0;
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const removed = strokesRef.current.pop();
+      if (!removed) return false;
+      redoStrokesRef.current.push(removed);
+      redrawFromModel();
+      return true;
+    },
+    redo: () => {
+      stopSession();
+      if (redoStrokesRef.current.length === 0) return false;
+      drawQueueRef.current.length = 0;
+      if (rafRef.current !== null) {
+        window.cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+      const restored = redoStrokesRef.current.pop();
+      if (!restored) return false;
+      strokesRef.current.push(restored);
+      redrawFromModel();
+      return true;
+    },
   }));
 
   return (
     <section className="noteCanvasFrame" ref={frameRef}>
       <canvas
         ref={canvasRef}
-        className={`noteCanvas ${annotationMode ? "annotationMode" : ""}`}
+        className={`noteCanvas ${annotationMode ? "annotationMode" : ""} ${eraserMode ? "eraserMode" : ""}`}
         onPointerDown={handlePointerDown}
       />
       {overlays.map((overlay) => (

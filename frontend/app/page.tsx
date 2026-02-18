@@ -30,6 +30,7 @@ export default function HomePage() {
 
   const [brushColor, setBrushColor] = useState("#17212a");
   const [brushSize, setBrushSize] = useState(3);
+  const [isEraserMode, setIsEraserMode] = useState(false);
 
   const [backendHealth, setBackendHealth] = useState<HealthResponse | null>(null);
   const [healthError, setHealthError] = useState<boolean>(false);
@@ -180,6 +181,31 @@ export default function HomePage() {
     return Object.values(notebooksState.notebooks).sort((a, b) => a.sortOrder - b.sortOrder);
   }, [notebooksState]);
 
+  const topTagsFromNotes = useMemo(() => {
+    if (!notebooksState) return [];
+
+    const notePool = Object.values(notebooksState.notes).filter((note) => {
+      if (note.notebookId === SYSTEM_NOTEBOOK_IDS.TRASH) return false;
+      if (!selectedNotebookId || selectedNotebookId === SYSTEM_NOTEBOOK_IDS.TRASH) return true;
+      return note.notebookId === selectedNotebookId;
+    });
+
+    const counts = new Map<string, number>();
+    for (const note of notePool) {
+      const uniqueTags = new Set(note.tags.filter((tag) => tag.trim().length > 0));
+      for (const tag of uniqueTags) {
+        counts.set(tag, (counts.get(tag) ?? 0) + 1);
+      }
+    }
+
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 3)
+      .map(([type, count]) => ({ type, count }));
+  }, [notebooksState, selectedNotebookId]);
+
+  const dashboardTopTags = notebooksState ? topTagsFromNotes : history.top_tags;
+
   return (
     <main className="noteShell">
       <header className="noteHeader">
@@ -246,8 +272,28 @@ export default function HomePage() {
             />
           </label>
 
+          <button
+            type="button"
+            className={`ghostBtn toolToggle ${!isEraserMode ? "active" : ""}`}
+            onClick={() => setIsEraserMode(false)}
+          >
+            펜
+          </button>
+          <button
+            type="button"
+            className={`ghostBtn toolToggle ${isEraserMode ? "active" : ""}`}
+            onClick={() => setIsEraserMode(true)}
+          >
+            지우개
+          </button>
+          <button type="button" className="ghostBtn" onClick={() => canvasRef.current?.undo()}>
+            되돌리기
+          </button>
+          <button type="button" className="ghostBtn" onClick={() => canvasRef.current?.redo()}>
+            앞으로
+          </button>
           <button type="button" className="ghostBtn" onClick={() => canvasRef.current?.clear()}>
-            필기 지우기
+            전체 지우기
           </button>
           <button
             type="button"
@@ -282,6 +328,7 @@ export default function HomePage() {
               ref={canvasRef}
               brushColor={brushColor}
               brushSize={brushSize}
+              eraserMode={isEraserMode}
               overlays={overlays}
               annotationMode={needsTapAnnotation}
               onAnnotationTap={handleAnnotationTap}
@@ -300,10 +347,10 @@ export default function HomePage() {
 
       <section className="historyDock">
         {/* Top Tags Dashboard */}
-        {history.top_tags && history.top_tags.length > 0 && (
+        {dashboardTopTags && dashboardTopTags.length > 0 && (
           <div className="topTagsDashboard" data-testid="top-tags">
             <span className="topTagsLabel">Top Tags:</span>
-            {history.top_tags.slice(0, 3).map((tag) => (
+            {dashboardTopTags.slice(0, 3).map((tag) => (
               <span key={`${tag.type}-${tag.count}`} className="topTagChip">
                 {tag.type} <small>x{tag.count}</small>
               </span>
