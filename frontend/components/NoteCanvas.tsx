@@ -230,8 +230,6 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
 
     canvas.width = nextWidth;
     canvas.height = nextHeight;
-    canvas.style.width = `${rect.width}px`;
-    canvas.style.height = `${rect.height}px`;
 
     ratioRef.current = ratio;
     const ctx = canvas.getContext("2d");

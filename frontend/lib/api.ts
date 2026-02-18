@@ -7,6 +7,12 @@ import type {
   Subject,
 } from "@/lib/types";
 
+export type HealthResponse = {
+  status: string;
+  queue_mode: string;
+  enable_ocr_hints: boolean;
+};
+
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8000";
 
 export function toAbsoluteImageUrl(relativePath: string): string {
@@ -80,5 +86,9 @@ export async function createAnnotation(payload: AnnotationPayload): Promise<void
 
 export async function fetchHistory(limit = 5): Promise<HistoryResponse> {
   return requestJson<HistoryResponse>(`/api/v1/history?limit=${limit}`);
+}
+
+export async function fetchHealth(): Promise<HealthResponse> {
+  return requestJson<HealthResponse>("/api/v1/health");
 }
 
