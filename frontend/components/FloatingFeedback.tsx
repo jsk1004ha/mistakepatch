@@ -65,7 +65,10 @@ export function FloatingFeedback({
               </div>
 
               {analysis?.fallback_used && (
-                <p className="warningText">모델 응답 오류로 fallback 결과가 표시되었습니다.</p>
+                <p className="warningText">
+                  모델 응답 오류로 fallback 결과가 표시되었습니다.
+                  {analysis.error_code ? ` (${analysis.error_code})` : ""}
+                </p>
               )}
 
               <div className="tabRow">

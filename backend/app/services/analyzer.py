@@ -30,7 +30,12 @@ def process_analysis_job(payload: dict[str, Any]) -> None:
         validated = _validate_result(raw_result)
     except Exception as exc:
         fallback_used = True
-        error_code = f"analysis_error:{type(exc).__name__}"
+        detail = str(exc).strip().replace("\n", " ")
+        if detail:
+            detail = detail[:120]
+            error_code = f"analysis_error:{type(exc).__name__}:{detail}"
+        else:
+            error_code = f"analysis_error:{type(exc).__name__}"
         validated = _load_fallback_result()
 
     if highlight_mode == "ocr_box" and settings.enable_ocr_hints:
@@ -91,4 +96,3 @@ def _inject_ocr_hints(result: dict[str, Any], image_path: str) -> None:
         if not all(highlight.get(key) is not None for key in ("x", "y", "w", "h")):
             highlight.update(hint)
             mistake["highlight"] = highlight
-

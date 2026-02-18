@@ -5,6 +5,24 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
+def _load_dotenv(path: Path) -> None:
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip()
+        if not key:
+            continue
+        if len(value) >= 2 and value[0] == value[-1] and value[0] in {"'", '"'}:
+            value = value[1:-1]
+        os.environ.setdefault(key, value)
+
+
 def _to_bool(value: str | None, default: bool = False) -> bool:
     if value is None:
         return default
@@ -21,6 +39,8 @@ class Settings:
     max_upload_bytes: int
     allowed_origins: list[str]
     openai_api_key: str | None
+    openai_organization: str | None
+    openai_project: str | None
     openai_model: str
     openai_timeout_seconds: int
     enable_ocr_hints: bool
@@ -30,6 +50,7 @@ class Settings:
     @classmethod
     def load(cls) -> "Settings":
         base_dir = Path(__file__).resolve().parents[1]
+        _load_dotenv(base_dir / ".env")
         data_dir = base_dir / "data"
 
         db_value = os.getenv("MISTAKEPATCH_DB_PATH", "data/mistakepatch.db")
@@ -61,6 +82,8 @@ class Settings:
             max_upload_bytes=max_upload_mb * 1024 * 1024,
             allowed_origins=allowed_origins,
             openai_api_key=os.getenv("OPENAI_API_KEY"),
+            openai_organization=os.getenv("OPENAI_ORGANIZATION"),
+            openai_project=os.getenv("OPENAI_PROJECT"),
             openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
             openai_timeout_seconds=int(os.getenv("OPENAI_TIMEOUT_SECONDS", "25")),
             enable_ocr_hints=_to_bool(os.getenv("ENABLE_OCR_HINTS"), default=False),

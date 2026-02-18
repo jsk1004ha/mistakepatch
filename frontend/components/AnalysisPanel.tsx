@@ -23,6 +23,23 @@ function hasBox(mistake: Mistake): boolean {
   );
 }
 
+function getFallbackHint(errorCode: string | null): string | null {
+  if (!errorCode) return null;
+  const normalized = errorCode.toLowerCase();
+
+  const isQuotaIssue =
+    normalized.includes("ratelimiterror") &&
+    (normalized.includes("quota") ||
+      normalized.includes("insufficient_quota") ||
+      normalized.includes("billing") ||
+      normalized.includes("429"));
+  if (isQuotaIssue) {
+    return "API 할당량/결제 한도를 확인하세요. OPENAI_ORGANIZATION/OPENAI_PROJECT를 지정하지 않으면 기본 조직으로 과금될 수 있습니다.";
+  }
+
+  return null;
+}
+
 export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: AnalysisPanelProps) {
   const [activeTab, setActiveTab] = useState<ResultTab>("mistakes");
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -32,6 +49,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
   const mistakes = result?.mistakes ?? [];
   const selectedMistake = mistakes[selectedIndex];
   const imageUrl = toAbsoluteImageUrl(analysis.solution_image_url);
+  const fallbackHint = getFallbackHint(analysis.error_code);
 
   const overlays = useMemo(
     () =>
@@ -71,7 +89,13 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
         <span className={`status ${analysis.status}`}>{analysis.status}</span>
       </div>
       {analysis.fallback_used && (
-        <p className="warningText">모델 응답 오류로 fallback 결과를 표시했습니다.</p>
+        <>
+          <p className="warningText">
+            모델 응답 오류로 fallback 결과를 표시했습니다.
+            {analysis.error_code ? ` (${analysis.error_code})` : ""}
+          </p>
+          {fallbackHint && <p className="warningText">{fallbackHint}</p>}
+        </>
       )}
       {notice && <p className="okText">{notice}</p>}
 

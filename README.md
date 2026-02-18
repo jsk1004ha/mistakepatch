@@ -39,6 +39,8 @@ npm run dev
 
 ## Environment Variables (Backend)
 - `OPENAI_API_KEY`: required for live model calls
+- `OPENAI_ORGANIZATION`: optional; force billing org to avoid wrong default org
+- `OPENAI_PROJECT`: optional; force billing project to avoid wrong default project
 - `OPENAI_MODEL`: default `gpt-4o-mini`
 - `ENABLE_OCR_HINTS`: `true/false` (default false)
 - `USE_REDIS_QUEUE`: `true/false` (default false)
@@ -56,4 +58,3 @@ python -m pytest tests -q
 - `POST /api/v1/annotations`
 - `GET /api/v1/history?limit=5`
 - `GET /api/v1/health`
-
