@@ -1,0 +1,48 @@
+.toast {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 50;
+  width: min(420px, calc(100vw - 32px));
+  background: #16202a;
+  color: #f7fbff;
+  border: 1px solid #2f3a45;
+  border-radius: 12px;
+  box-shadow: 0 14px 28px rgba(9, 14, 20, 0.35);
+  padding: 12px;
+}
+
+.message {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.actions {
+  margin-top: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.action,
+.actionPrimary {
+  border-radius: 8px;
+  border: 1px solid #415060;
+  font-size: 12px;
+  line-height: 1;
+  padding: 8px 10px;
+  cursor: pointer;
+  background: transparent;
+  color: inherit;
+}
+
+.actionPrimary {
+  border-color: #6ca0ff;
+  color: #d8e7ff;
+}
+
+.action:hover,
+.actionPrimary:hover {
+  background: rgba(255, 255, 255, 0.08);
+}

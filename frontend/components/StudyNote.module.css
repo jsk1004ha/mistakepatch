@@ -1,0 +1,197 @@
+.container {
+  font-family: var(--font-mono, monospace);
+  max-width: 800px;
+  margin: 0 auto;
+  padding: 2rem;
+  background: #fdfbf7; /* Warm paper-like background */
+  color: #2d2d2d;
+  border: 1px solid #e0e0e0;
+  box-shadow: 2px 2px 0px rgba(0, 0, 0, 0.05);
+}
+
+.header {
+  border-bottom: 2px solid #2d2d2d;
+  padding-bottom: 1rem;
+  margin-bottom: 2rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.title {
+  font-size: 1.5rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin: 0;
+}
+
+.score {
+  font-size: 2rem;
+  font-weight: 800;
+}
+
+.section {
+  margin-bottom: 2.5rem;
+}
+
+.sectionTitle {
+  font-size: 1.1rem;
+  font-weight: 700;
+  border-bottom: 1px solid #ccc;
+  padding-bottom: 0.5rem;
+  margin-bottom: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Rubric Grid */
+.rubricGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1rem;
+}
+
+.rubricItem {
+  background: #fff;
+  border: 1px solid #eee;
+  padding: 0.75rem;
+  text-align: center;
+}
+
+.rubricLabel {
+  display: block;
+  font-size: 0.75rem;
+  color: #666;
+  text-transform: uppercase;
+  margin-bottom: 0.25rem;
+}
+
+.rubricValue {
+  display: block;
+  font-size: 1.25rem;
+  font-weight: 600;
+}
+
+/* Mistakes List */
+.mistakeList {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.mistakeCard {
+  background: #fff;
+  border: 1px solid #eee;
+  border-left: 4px solid #ff6b6b; /* Red accent for mistakes */
+  padding: 1rem;
+}
+
+.mistakeHeader {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+  font-weight: 600;
+}
+
+.mistakeType {
+  color: #d63031;
+}
+
+.mistakeDeduction {
+  color: #d63031;
+}
+
+.mistakeDetails {
+  font-size: 0.9rem;
+  line-height: 1.5;
+  color: #444;
+}
+
+.mistakeDetailRow {
+  margin-top: 0.5rem;
+  display: flex;
+  gap: 0.5rem;
+}
+
+.detailLabel {
+  font-weight: 600;
+  min-width: 60px;
+  color: #666;
+}
+
+/* Patch Section */
+.patchContainer {
+  background: #f0f8ff;
+  border: 1px solid #dbeafe;
+  padding: 1.5rem;
+}
+
+.patchBrief {
+  font-style: italic;
+  margin-bottom: 1.5rem;
+  color: #1e3a8a;
+}
+
+.changeList {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.changeItem {
+  display: flex;
+  gap: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #dae1e7;
+}
+
+.changeItem:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.changeText {
+  font-weight: 600;
+  color: #000;
+  flex: 1;
+}
+
+.changeRationale {
+  flex: 2;
+  color: #555;
+  font-size: 0.9rem;
+}
+
+/* Checklist */
+.checklist {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.75rem;
+}
+
+.checklistItem {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.75rem;
+  font-size: 0.95rem;
+}
+
+.checkbox {
+  width: 1.2rem;
+  height: 1.2rem;
+  border: 2px solid #2d2d2d;
+  flex-shrink: 0;
+  margin-top: 0.1rem;
+}
+
+.emptyState {
+  color: #888;
+  font-style: italic;
+  padding: 1rem;
+  text-align: center;
+  background: rgba(0,0,0,0.02);
+}
