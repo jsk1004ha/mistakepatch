@@ -21,3 +21,12 @@ backend/data/test.db
 backend/.env
 frontend/.env.local
 
+# Sisyphus
+.sisyphus/
+
+# Playwright
+playwright-report/
+test-results/
+
+# Logs
+*.log
