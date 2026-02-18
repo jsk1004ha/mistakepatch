@@ -72,18 +72,21 @@ export function FloatingFeedback({
                 <button
                   className={activeTab === "mistakes" ? "active" : ""}
                   onClick={() => onTabChange("mistakes")}
+                  data-testid="feedback-tab-mistakes"
                 >
                   감점
                 </button>
                 <button
                   className={activeTab === "patch" ? "active" : ""}
                   onClick={() => onTabChange("patch")}
+                  data-testid="feedback-tab-patch"
                 >
                   패치
                 </button>
                 <button
                   className={activeTab === "checklist" ? "active" : ""}
                   onClick={() => onTabChange("checklist")}
+                  data-testid="feedback-tab-checklist"
                 >
                   체크
                 </button>
@@ -96,6 +99,7 @@ export function FloatingFeedback({
                       key={mistake.mistake_id ?? `${mistake.type}-${index}`}
                       className={`mistakeCard ${index === selectedIndex ? "active" : ""}`}
                       onClick={() => onSelectIndex(index)}
+                      data-testid={`mistake-card-${index}`}
                     >
                       <div className="cardTop">
                         <strong>{mistake.type}</strong>
