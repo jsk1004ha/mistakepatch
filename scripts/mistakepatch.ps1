@@ -53,11 +53,34 @@ try {
     $BackendProc = Start-Process -FilePath $PythonExe -ArgumentList "-m uvicorn app.main:app --host 0.0.0.0 --port 8000" -WorkingDirectory $BackendDir -PassThru -NoNewWindow -RedirectStandardOutput $BackendOut -RedirectStandardError $BackendErr
     $Processes += $BackendProc
 
-    Write-Host "Starting Frontend..."
-    $FrontendOut = Join-Path $EvidenceDir "frontend.out.log"
-    $FrontendErr = Join-Path $EvidenceDir "frontend.err.log"
-    $FrontendProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm run dev" -WorkingDirectory $FrontendDir -PassThru -NoNewWindow -RedirectStandardOutput $FrontendOut -RedirectStandardError $FrontendErr
-    $Processes += $FrontendProc
+    if ($Mode -eq 'test') {
+        Write-Host "Mode is 'test'. Running Lint and Build before starting Frontend server..."
+        
+        Write-Host "1. Running Lint..."
+        pushd $FrontendDir
+        npm run lint
+        if ($LASTEXITCODE -ne 0) { throw "Lint failed" }
+        popd
+
+        Write-Host "2. Running Build..."
+        pushd $FrontendDir
+        npm run build
+        if ($LASTEXITCODE -ne 0) { throw "Build failed" }
+        popd
+
+        Write-Host "Starting Frontend (Production)..."
+        $FrontendOut = Join-Path $EvidenceDir "frontend.out.log"
+        $FrontendErr = Join-Path $EvidenceDir "frontend.err.log"
+        $FrontendProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm run start" -WorkingDirectory $FrontendDir -PassThru -NoNewWindow -RedirectStandardOutput $FrontendOut -RedirectStandardError $FrontendErr
+        $Processes += $FrontendProc
+    }
+    else {
+        Write-Host "Starting Frontend (Development)..."
+        $FrontendOut = Join-Path $EvidenceDir "frontend.out.log"
+        $FrontendErr = Join-Path $EvidenceDir "frontend.err.log"
+        $FrontendProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm run dev" -WorkingDirectory $FrontendDir -PassThru -NoNewWindow -RedirectStandardOutput $FrontendOut -RedirectStandardError $FrontendErr
+        $Processes += $FrontendProc
+    }
 
     # Readiness checks
     Write-Host "Waiting for servers to be ready..."
@@ -100,18 +123,6 @@ try {
     elseif ($Mode -eq 'test') {
         Write-Host "Running tests..."
         
-        Write-Host "1. Running Lint..."
-        pushd $FrontendDir
-        npm run lint
-        if ($LASTEXITCODE -ne 0) { throw "Lint failed" }
-        popd
-
-        Write-Host "2. Running Build..."
-        pushd $FrontendDir
-        npm run build
-        if ($LASTEXITCODE -ne 0) { throw "Build failed" }
-        popd
-
         Write-Host "3. Running E2E tests..."
         pushd $FrontendDir
         npm run test:e2e
