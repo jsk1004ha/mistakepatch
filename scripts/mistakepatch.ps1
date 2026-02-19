@@ -40,10 +40,64 @@ if (-not (Get-Command npm -ErrorAction SilentlyContinue)) {
     exit 1
 }
 
-# Environment variables for fallback mode
-$env:OPENAI_API_KEY = ""
+function Load-EnvFile {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Path
+    )
+
+    if (-not (Test-Path $Path)) {
+        return
+    }
+
+    Get-Content $Path | ForEach-Object {
+        $line = $_.Trim()
+        if ($line -eq "" -or $line.StartsWith("#")) {
+            return
+        }
+        $idx = $line.IndexOf("=")
+        if ($idx -lt 1) {
+            return
+        }
+
+        $key = $line.Substring(0, $idx).Trim()
+        $value = $line.Substring($idx + 1).Trim()
+        if ($key -eq "") {
+            return
+        }
+
+        # Strip surrounding quotes
+        if (($value.StartsWith('"') -and $value.EndsWith('"')) -or ($value.StartsWith("'") -and $value.EndsWith("'"))) {
+            if ($value.Length -ge 2) {
+                $value = $value.Substring(1, $value.Length - 2)
+            }
+        }
+
+        # Do not override existing env vars
+        if (-not (Test-Path "Env:$key")) {
+            Set-Item -Path "Env:$key" -Value $value
+        }
+    }
+}
+
+# Environment variables
 $env:USE_REDIS_QUEUE = "false"
 $env:ENABLE_OCR_HINTS = "true"
+
+if ($Mode -eq 'test') {
+    # Force fallback mode for deterministic tests
+    $env:OPENAI_API_KEY = ""
+}
+else {
+    # Dev mode: allow live model calls if key is provided
+    if (-not $env:OPENAI_API_KEY -or $env:OPENAI_API_KEY.Trim() -eq "") {
+        Load-EnvFile (Join-Path $BackendDir ".env")
+    }
+    if (-not $env:OPENAI_API_KEY -or $env:OPENAI_API_KEY.Trim() -eq "") {
+        Write-Host "OPENAI_API_KEY is not set. Backend will run in fallback mode."
+        Write-Host "Tip: set it in your shell or add it to backend/.env (not committed)."
+    }
+}
 
 $Processes = @()
 
