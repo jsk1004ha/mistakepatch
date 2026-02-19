@@ -28,6 +28,12 @@ class Severity(str, Enum):
     high = "high"
 
 
+class AnswerVerdict(str, Enum):
+    correct = "correct"
+    incorrect = "incorrect"
+    unknown = "unknown"
+
+
 class MistakeType(str, Enum):
     condition_missed = "CONDITION_MISSED"
     sign_error = "SIGN_ERROR"
@@ -106,6 +112,8 @@ class AnalysisResult(BaseModel):
     next_checklist: conlist(str, min_length=1, max_length=3)
     confidence: confloat(ge=0, le=1)
     missing_info: list[str] = Field(default_factory=list, max_length=6)
+    answer_verdict: AnswerVerdict = AnswerVerdict.unknown
+    answer_verdict_reason: str = Field(default="정오 판단 정보가 부족합니다.", min_length=1, max_length=120)
 
 
 class AnalyzeStatus(str, Enum):

@@ -47,6 +47,9 @@ class Settings:
     groq_model: str
     groq_base_url: str
     enable_ocr_hints: bool
+    consensus_runs: int
+    consensus_min_agreement: float
+    uncertainty_threshold: float
     use_redis_queue: bool
     redis_url: str
 
@@ -93,6 +96,15 @@ class Settings:
             groq_model=os.getenv("GROQ_MODEL", "llama-3.1-8b-instant"),
             groq_base_url=os.getenv("GROQ_BASE_URL", "https://api.groq.com/openai/v1"),
             enable_ocr_hints=_to_bool(os.getenv("ENABLE_OCR_HINTS"), default=False),
+            consensus_runs=max(1, int(os.getenv("MISTAKEPATCH_CONSENSUS_RUNS", "3"))),
+            consensus_min_agreement=max(
+                0.0,
+                min(1.0, float(os.getenv("MISTAKEPATCH_CONSENSUS_MIN_AGREEMENT", "0.55"))),
+            ),
+            uncertainty_threshold=max(
+                0.0,
+                min(1.0, float(os.getenv("MISTAKEPATCH_UNCERTAINTY_THRESHOLD", "0.6"))),
+            ),
             use_redis_queue=_to_bool(os.getenv("USE_REDIS_QUEUE"), default=False),
             redis_url=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
         )

@@ -13,6 +13,7 @@ import {
 
 import { getAnalysisEventsUrl, toAbsoluteImageUrl } from "@/lib/api";
 import type {
+  AnswerVerdict,
   AnalysisDetail,
   AnalysisProgressEvent,
   AnnotationPayload,
@@ -62,6 +63,19 @@ function hasBox(mistake: Mistake): boolean {
     typeof h.w === "number" &&
     typeof h.h === "number"
   );
+}
+
+function formatDeductionLabel(points: number): string {
+  if (!Number.isFinite(points)) return "-?점";
+  const rounded = Math.round(points * 10) / 10;
+  if (Math.abs(rounded) < 0.05) return "보류";
+  return `-${rounded.toFixed(1)}점`;
+}
+
+function formatVerdictLabel(verdict: AnswerVerdict): string {
+  if (verdict === "correct") return "정답";
+  if (verdict === "incorrect") return "오답";
+  return "판정보류";
 }
 
 function getFallbackHint(errorCode: string | null): string | null {
@@ -437,7 +451,10 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
           <div className="imagePane">
             <div className="scoreCard">
               <strong>{result.score_total.toFixed(1)} / 10</strong>
-              <span>confidence: {(result.confidence * 100).toFixed(0)}%</span>
+              <span>
+                {formatVerdictLabel(result.answer_verdict)} | confidence {(result.confidence * 100).toFixed(0)}%
+              </span>
+              <span>{result.answer_verdict_reason}</span>
             </div>
             <div className="imageWrap">
               <img
@@ -529,7 +546,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
                   >
                     <div className="cardTop">
                       <strong>{mistake.type}</strong>
-                      <span>-{mistake.points_deducted.toFixed(1)}점</span>
+                      <span>{formatDeductionLabel(mistake.points_deducted)}</span>
                     </div>
                     <p>{mistake.evidence}</p>
                     <p className="fixText">{mistake.fix_instruction}</p>

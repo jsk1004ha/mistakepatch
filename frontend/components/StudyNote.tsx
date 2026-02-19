@@ -22,6 +22,8 @@ export function StudyNote({ result }: StudyNoteProps) {
     patch,
     next_checklist = [],
     confidence,
+    answer_verdict,
+    answer_verdict_reason,
   } = result;
 
   return (
@@ -33,6 +35,9 @@ export function StudyNote({ result }: StudyNoteProps) {
           {score_total != null ? score_total.toFixed(1) : "-"} <span style={{ fontSize: "1rem", fontWeight: 400 }}>/ 10</span>
         </div>
       </header>
+      <p className={styles.emptyState}>
+        {answer_verdict === "correct" ? "정답" : answer_verdict === "incorrect" ? "오답" : "판정보류"} · {answer_verdict_reason}
+      </p>
 
       {/* Rubric Breakdown */}
       <section className={styles.section}>
@@ -132,13 +137,17 @@ function RubricItem({ label, value }: { label: string; value?: number }) {
 }
 
 function MistakeCard({ mistake }: { mistake: Mistake }) {
+  const points = mistake.points_deducted;
+  const deductionLabel =
+    typeof points === "number" && Number.isFinite(points) && Math.abs(points) < 0.05
+      ? "On hold"
+      : `-${points != null ? points.toFixed(1) : "?"} pts`;
+
   return (
     <div className={styles.mistakeCard}>
       <div className={styles.mistakeHeader}>
         <span className={styles.mistakeType}>{mistake.type}</span>
-        <span className={styles.mistakeDeduction}>
-          -{mistake.points_deducted != null ? mistake.points_deducted.toFixed(1) : "?"} pts
-        </span>
+        <span className={styles.mistakeDeduction}>{deductionLabel}</span>
       </div>
       <div className={styles.mistakeDetails}>
         <div><strong>Fix:</strong> {mistake.fix_instruction}</div>

@@ -4,6 +4,7 @@ export type ProgressStep = "upload_complete" | "ocr_analyzing" | "ai_grading" | 
 export type HighlightMode = "tap" | "ocr_box" | "region_box";
 export type HighlightShape = "circle" | "box";
 export type Severity = "low" | "med" | "high";
+export type AnswerVerdict = "correct" | "incorrect" | "unknown";
 
 export type MistakeType =
   | "CONDITION_MISSED"
@@ -63,6 +64,8 @@ export interface AnalysisResult {
   next_checklist: string[];
   confidence: number;
   missing_info: string[];
+  answer_verdict: AnswerVerdict;
+  answer_verdict_reason: string;
 }
 
 export interface AnalyzeQueuedResponse {

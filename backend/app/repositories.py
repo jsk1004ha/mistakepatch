@@ -160,6 +160,9 @@ def get_analysis(analysis_id: str) -> dict[str, Any] | None:
         result_obj: dict[str, Any] | None = None
         if header["result_json"]:
             result_obj = json.loads(header["result_json"])
+            if isinstance(result_obj, dict):
+                result_obj.setdefault("answer_verdict", "unknown")
+                result_obj.setdefault("answer_verdict_reason", "정오 판단 정보가 부족합니다.")
 
         mistake_rows = conn.execute(
             """
@@ -288,4 +291,3 @@ def list_history(limit: int = 5) -> dict[str, Any]:
         "items": [dict(row) for row in rows],
         "top_tags": [dict(row) for row in tags],
     }
-

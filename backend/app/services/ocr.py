@@ -25,6 +25,33 @@ def extract_image_text(image_path: str, max_chars: int = 1500) -> str:
         return ""
 
 
+def extract_image_lines(
+    image_path: str,
+    max_lines: int = 12,
+    max_chars_per_line: int = 120,
+) -> list[str]:
+    try:
+        with Image.open(image_path) as img:
+            if pytesseract is None:
+                return []
+            try:
+                text = pytesseract.image_to_string(img)
+            except Exception:
+                return []
+    except Exception:
+        return []
+
+    lines: list[str] = []
+    for raw in text.splitlines():
+        normalized = " ".join(raw.split())
+        if not normalized:
+            continue
+        lines.append(normalized[:max_chars_per_line])
+        if len(lines) >= max_lines:
+            break
+    return lines
+
+
 def suggest_ocr_boxes(image_path: str, max_boxes: int = 3) -> list[dict[str, Any]]:
     """Return normalized OCR hint boxes (0..1)."""
     try:
@@ -32,6 +59,14 @@ def suggest_ocr_boxes(image_path: str, max_boxes: int = 3) -> list[dict[str, Any
             width, height = img.size
             if width <= 0 or height <= 0:
                 return []
+
+            # Prefer line-level boxes for step localization.
+            try:
+                line_boxes = _detect_ink_line_boxes(img, max_boxes=max_boxes)
+                if line_boxes:
+                    return line_boxes
+            except Exception:
+                pass
 
             if pytesseract is not None:
                 try:
@@ -63,26 +98,25 @@ def suggest_ocr_boxes(image_path: str, max_boxes: int = 3) -> list[dict[str, Any
                 except Exception:
                     pass
 
-            try:
-                line_boxes = _detect_ink_line_boxes(img, max_boxes=max_boxes)
-                if line_boxes:
-                    return line_boxes
-            except Exception:
-                pass
-
             # Conservative fallback hints if OCR engine is unavailable.
             return [
-                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.2, "w": 0.75, "h": 0.12},
-                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.45, "w": 0.75, "h": 0.12},
-                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.7, "w": 0.72, "h": 0.12},
+                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.2, "w": 0.75, "h": 0.1},
+                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.33, "w": 0.75, "h": 0.1},
+                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.46, "w": 0.75, "h": 0.1},
+                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.59, "w": 0.75, "h": 0.1},
+                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.72, "w": 0.72, "h": 0.1},
+                {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.85, "w": 0.7, "h": 0.1},
             ][:max_boxes]
     except Exception:
         pass
 
     return [
-        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.2, "w": 0.75, "h": 0.12},
-        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.45, "w": 0.75, "h": 0.12},
-        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.7, "w": 0.72, "h": 0.12},
+        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.2, "w": 0.75, "h": 0.1},
+        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.33, "w": 0.75, "h": 0.1},
+        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.46, "w": 0.75, "h": 0.1},
+        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.59, "w": 0.75, "h": 0.1},
+        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.72, "w": 0.72, "h": 0.1},
+        {"mode": "ocr_box", "shape": "box", "x": 0.5, "y": 0.85, "w": 0.7, "h": 0.1},
     ][:max_boxes]
 
 

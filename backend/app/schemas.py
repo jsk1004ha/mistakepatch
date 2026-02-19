@@ -15,6 +15,8 @@ ANALYSIS_RESULT_JSON_SCHEMA: dict = {
         "next_checklist",
         "confidence",
         "missing_info",
+        "answer_verdict",
+        "answer_verdict_reason",
     ],
     "additionalProperties": False,
     "properties": {
@@ -104,6 +106,8 @@ ANALYSIS_RESULT_JSON_SCHEMA: dict = {
             "maxItems": 6,
             "items": {"type": "string", "maxLength": 80},
         },
+        "answer_verdict": {"type": "string", "enum": ["correct", "incorrect", "unknown"]},
+        "answer_verdict_reason": {"type": "string", "maxLength": 120},
     },
 }
 
@@ -114,5 +118,6 @@ Return only concise grading feedback in Korean.
 Do not provide full final solutions unless needed for minimal correction.
 Always output valid JSON following the provided schema.
 Prefer minimal patch instructions over long explanations.
+Set answer_verdict to correct/incorrect/unknown and provide answer_verdict_reason.
 If image quality is low, reduce confidence and fill missing_info.
 """.strip()
