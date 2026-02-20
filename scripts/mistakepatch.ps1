@@ -40,9 +40,9 @@ else {
     Write-Error "Python virtual environment not found."
     Write-Host "Create ONE of these and install backend deps:"
     Write-Host "  (Option A) backend/.venv:"
-    Write-Host "    cd backend; python -m venv .venv; .\._venv\Scripts\python -m pip install -r requirements.txt"
+    Write-Host "    cd backend; python -m venv .venv; .\.venv\Scripts\python -m pip install -r requirements.txt"
     Write-Host "  (Option B) repo-root/.venv:"
-    Write-Host "    python -m venv .venv; .\._venv\Scripts\python -m pip install -r backend\requirements.txt"
+    Write-Host "    python -m venv .venv; .\.venv\Scripts\python -m pip install -r backend\requirements.txt"
     exit 1
 }
 

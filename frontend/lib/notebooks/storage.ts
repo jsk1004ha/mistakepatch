@@ -3,6 +3,15 @@ import { NotebooksState, VersionedState, Notebook } from "./types";
 export const STORAGE_KEY = "mistakepatch:notebooks";
 export const CURRENT_VERSION = 3;
 
+const isDev = typeof process !== "undefined" && process.env?.NODE_ENV !== "production";
+function logWarn(...args: unknown[]) {
+  if (isDev) console.warn(...args);
+}
+
+function logError(...args: unknown[]) {
+  if (isDev) console.error(...args);
+}
+
 export const SYSTEM_NOTEBOOK_IDS = {
   INBOX: "inbox",
   TRASH: "trash",
@@ -41,7 +50,7 @@ export function resetState(): NotebooksState {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(versioned));
   } catch (e) {
-    console.error("Failed to reset localStorage", e);
+    logError("Failed to reset localStorage", e);
   }
   return state;
 }
@@ -57,14 +66,14 @@ export function loadState(): NotebooksState {
     
     // Basic structural check
     if (!parsed || typeof parsed !== "object" || !("v" in parsed)) {
-      console.warn("Invalid storage format, resetting...");
+      logWarn("Invalid storage format, resetting...");
       return resetState();
     }
 
     const versioned = parsed as VersionedState;
 
     if (versioned.v > CURRENT_VERSION) {
-      console.warn("Future version detected, resetting to avoid corruption...");
+      logWarn("Future version detected, resetting to avoid corruption...");
       return resetState();
     }
 
@@ -75,13 +84,13 @@ export function loadState(): NotebooksState {
     // Validation: ensure system notebooks exist
     if (!versioned.state.notebooks[SYSTEM_NOTEBOOK_IDS.INBOX] || 
         !versioned.state.notebooks[SYSTEM_NOTEBOOK_IDS.TRASH]) {
-      console.warn("Missing system notebooks, resetting...");
+      logWarn("Missing system notebooks, resetting...");
       return resetState();
     }
 
     return versioned.state;
   } catch (e) {
-    console.error("Failed to parse localStorage", e);
+    logError("Failed to parse localStorage", e);
     return resetState();
   }
 }
@@ -96,7 +105,7 @@ export function saveState(state: NotebooksState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(versioned));
   } catch (e) {
-    console.error("Failed to save to localStorage", e);
+    logError("Failed to save to localStorage", e);
     throw new Error("STORAGE_WRITE_FAILURE");
   }
 }
@@ -163,7 +172,7 @@ function migrate(old: VersionedState): NotebooksState {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(versioned));
     } catch (e) {
-      console.warn("Failed to persist migrated localStorage state", e);
+      logWarn("Failed to persist migrated localStorage state", e);
     }
   }
 

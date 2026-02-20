@@ -305,6 +305,25 @@ button:disabled {
   padding: 8px 10px;
 }
 
+.verdictRow {
+  display: flex;
+  gap: 0.5rem;
+  align-items: baseline;
+  margin: 6px 4px 0;
+}
+
+.verdictRow strong {
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.verdictReason {
+  margin: 6px 4px 0;
+  color: var(--muted);
+  font-size: 0.85rem;
+  line-height: 1.35;
+}
+
 .tabRow {
   display: flex;
   gap: 6px;

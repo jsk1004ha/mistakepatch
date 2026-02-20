@@ -14,6 +14,11 @@ test("E2E 1", async ({ page }) => {
 
   const firstMistakeCard = page.getByTestId("mistake-card-0");
   await firstMistakeCard.waitFor({ state: "visible", timeout: 90_000 });
+
+  await expect(page.getByTestId("verdict-row")).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByTestId("verdict-row")).toContainText(/정답|오답|판정보류/);
+  await expect(page.getByTestId("verdict-reason")).toBeVisible();
+
   await firstMistakeCard.click();
 
   await page.getByTestId("canvas-root").click();

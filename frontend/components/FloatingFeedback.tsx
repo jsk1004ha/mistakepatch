@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-import type { AnalysisDetail, AnalyzeStatus, Mistake } from "@/lib/types";
+import type { AnalysisDetail, AnalyzeStatus, AnswerVerdict, Mistake } from "@/lib/types";
 import { formatMistakeType } from "@/lib/mistakeTypeLabels";
 
 type FeedbackTab = "mistakes" | "patch" | "checklist";
@@ -28,6 +28,12 @@ function needsTap(mistake: Mistake | undefined) {
   return typeof mistake.highlight.x !== "number" || typeof mistake.highlight.y !== "number";
 }
 
+function formatVerdictLabel(verdict: AnswerVerdict): string {
+  if (verdict === "correct") return "정답";
+  if (verdict === "incorrect") return "오답";
+  return "판정보류";
+}
+
 export function FloatingFeedback({
   analysis,
   isSubmitting,
@@ -40,13 +46,13 @@ export function FloatingFeedback({
   const result = analysis?.result ?? null;
   const mistakes = result?.mistakes ?? [];
   const selectedMistake = mistakes[selectedIndex];
-  const isLikelyCorrect = Boolean(result && mistakes.length === 0 && result.score_total >= 9.5);
+  const isLikelyCorrect = Boolean(result && result.answer_verdict === "correct");
 
   return (
     <aside className={`floatingFeedback ${collapsed ? "collapsed" : ""}`}>
       <header className="floatingHeader">
         <div>
-          <strong>MistakePatch Assistant</strong>
+          <strong>MistakePatch 도우미</strong>
           <span>
             {analysis ? statusText(analysis.status) : isSubmitting ? "분석 요청 중" : "대기"}
           </span>
@@ -70,8 +76,16 @@ export function FloatingFeedback({
             <>
               <div className="floatingScore">
                 <strong>{result.score_total.toFixed(1)} / 10</strong>
-                <span>confidence {(result.confidence * 100).toFixed(0)}%</span>
+                <span>신뢰도 {(result.confidence * 100).toFixed(0)}%</span>
               </div>
+
+              <div className="verdictRow" data-testid="verdict-row">
+                <strong>정오:</strong>
+                <span>{formatVerdictLabel(result.answer_verdict)}</span>
+              </div>
+              <p className="verdictReason" data-testid="verdict-reason">
+                {result.answer_verdict_reason}
+              </p>
               {isLikelyCorrect && (
                 <p className="okText">정답으로 판단했습니다. (자동 감점 포인트 없음)</p>
               )}
