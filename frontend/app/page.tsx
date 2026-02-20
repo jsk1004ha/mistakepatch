@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 
 import { FloatingFeedback } from "@/components/FloatingFeedback";
 import { NotebooksDrawer } from "@/components/NotebooksDrawer";
@@ -226,7 +227,7 @@ export default function HomePage() {
     <main className="noteShell">
       <header className="noteHeader">
         <div className="brandBlock">
-          <h1>MistakePatch Notes</h1>
+          <h1>MistakePatch 기록</h1>
           <p>필기앱 기반 오답 피드백: 필기하면서 바로 감점/패치 확인</p>
         </div>
 
@@ -326,17 +327,24 @@ export default function HomePage() {
 
       {error && <p className="errorText">{error}</p>}
       {info && <p className="okText">{info}</p>}
-      {highlightMode === "ocr_box" && backendHealth?.enable_ocr_hints === false && (
-        <p className="okText" style={{ color: "#666" }}>
-          Tip: set ENABLE_OCR_HINTS=true on backend for OCR box hints.
-        </p>
-      )}
+        {highlightMode === "ocr_box" && backendHealth?.enable_ocr_hints === false && (
+            <p className="okText" style={{ color: "#666" }}>
+          OCR 박스 힌트 활성화를 원하면 ENABLE_OCR_HINTS=true 를 백엔드에 설정하세요.
+            </p>
+          )}
 
       <section className="workspace">
         {problemPreviewUrl && (
           <aside className="problemPreview">
             <strong>문제 이미지</strong>
-            <img src={problemPreviewUrl} alt="problem preview" />
+            <Image
+              src={problemPreviewUrl}
+              alt="문제 미리보기"
+              width={1200}
+              height={900}
+              unoptimized
+              style={{ width: "100%", height: "auto" }}
+            />
           </aside>
         )}
 
@@ -398,7 +406,9 @@ export default function HomePage() {
                     data-testid={`note-card-${note.id}`}
                   >
                     <div className="noteCardHeader">
-                      <span className="noteSubject">{note.subject}</span>
+                    <span className="noteSubject">
+                        {note.subject === "math" ? "수학" : note.subject === "physics" ? "물리" : note.subject}
+                    </span>
                       <span className="noteDate">
                         {new Date(note.createdAt).toLocaleDateString()}
                       </span>

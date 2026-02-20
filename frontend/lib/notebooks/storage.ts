@@ -1,7 +1,7 @@
 import { NotebooksState, VersionedState, Notebook } from "./types";
 
 export const STORAGE_KEY = "mistakepatch:notebooks";
-export const CURRENT_VERSION = 2;
+export const CURRENT_VERSION = 3;
 
 export const SYSTEM_NOTEBOOK_IDS = {
   INBOX: "inbox",
@@ -108,6 +108,7 @@ export function ensureInitialized(): NotebooksState {
 function migrate(old: VersionedState): NotebooksState {
   let currentState = old.state;
   let currentV = old.v;
+  let migrated = false;
 
   // v1 -> v2: Add previousNotebookId to all notes
   if (currentV === 1) {
@@ -117,11 +118,53 @@ function migrate(old: VersionedState): NotebooksState {
     }
     currentState = { ...currentState, notes };
     currentV = 2;
+    migrated = true;
+  }
+
+  // v2 -> v3: Ensure system notebooks exist and normalize system names
+  if (currentV === 2) {
+    const defaults = createDefaultState().notebooks;
+    const notebooks = { ...currentState.notebooks };
+
+    const inbox: Notebook = {
+      ...(notebooks[SYSTEM_NOTEBOOK_IDS.INBOX] ?? defaults[SYSTEM_NOTEBOOK_IDS.INBOX]),
+      id: SYSTEM_NOTEBOOK_IDS.INBOX,
+      name: "수신함",
+      system: true,
+      sortOrder: 0,
+    };
+
+    const trash: Notebook = {
+      ...(notebooks[SYSTEM_NOTEBOOK_IDS.TRASH] ?? defaults[SYSTEM_NOTEBOOK_IDS.TRASH]),
+      id: SYSTEM_NOTEBOOK_IDS.TRASH,
+      name: "휴지통",
+      system: true,
+      sortOrder: 1,
+    };
+
+    notebooks[SYSTEM_NOTEBOOK_IDS.INBOX] = inbox;
+    notebooks[SYSTEM_NOTEBOOK_IDS.TRASH] = trash;
+
+    currentState = { ...currentState, notebooks };
+    currentV = 3;
+    migrated = true;
   }
   
   // For now, if it's not current, we just reset or handle specific jumps
   if (currentV !== CURRENT_VERSION) {
     return resetState();
+  }
+
+  if (migrated && typeof window !== "undefined") {
+    const versioned: VersionedState = {
+      v: currentV,
+      state: currentState,
+    };
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(versioned));
+    } catch (e) {
+      console.warn("Failed to persist migrated localStorage state", e);
+    }
   }
 
   return currentState;

@@ -40,9 +40,9 @@ else {
     Write-Error "Python virtual environment not found."
     Write-Host "Create ONE of these and install backend deps:"
     Write-Host "  (Option A) backend/.venv:"
-    Write-Host "    cd backend; python -m venv .venv; .\.venv\Scripts\python -m pip install -r requirements.txt"
+    Write-Host "    cd backend; python -m venv .venv; .\._venv\Scripts\python -m pip install -r requirements.txt"
     Write-Host "  (Option B) repo-root/.venv:"
-    Write-Host "    python -m venv .venv; .\.venv\Scripts\python -m pip install -r backend\requirements.txt"
+    Write-Host "    python -m venv .venv; .\._venv\Scripts\python -m pip install -r backend\requirements.txt"
     exit 1
 }
 
@@ -113,6 +113,31 @@ else {
 $Processes = @()
 
 try {
+    # Pre-clean (test mode) must run before starting the backend
+    if ($Mode -eq 'test') {
+        Write-Host "Test mode pre-clean: stopping listeners on ports 8000/3000 and cleaning frontend/.next (before backend start)."
+        try {
+            $PortPids = Get-NetTCPConnection -LocalPort 8000,3000 -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique
+            foreach ($p in $PortPids) {
+                if ($p) {
+                    Write-Host "Killing PID $p on port 8000/3000"
+                    Stop-Process -Id $p -Force -ErrorAction SilentlyContinue
+                }
+            }
+        } catch {
+            # best-effort
+        }
+        try {
+            $NextPath = Join-Path $FrontendDir ".next"
+            if (Test-Path $NextPath) {
+                Remove-Item -Path $NextPath -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "frontend/.next cleaned (pre-backend start)."
+            }
+        } catch {
+            # best-effort
+        }
+    }
+
     Write-Host "Starting Backend..."
     $BackendOut = Join-Path $EvidenceDir "backend.out.log"
     $BackendErr = Join-Path $EvidenceDir "backend.err.log"
@@ -120,8 +145,7 @@ try {
     $Processes += $BackendProc
 
     if ($Mode -eq 'test') {
-        Write-Host "Mode is 'test'. Running Lint and Build before starting Frontend server..."
-        
+        Write-Host "Mode is 'test'. Running lint, build, and production frontend start..."
         Write-Host "1. Running Lint..."
         pushd $FrontendDir
         npm run lint
@@ -194,7 +218,7 @@ try {
         npm run test:e2e
         if ($LASTEXITCODE -ne 0) { throw "E2E tests failed" }
         popd
-
+        
         Write-Host "Tests completed successfully!"
     }
 

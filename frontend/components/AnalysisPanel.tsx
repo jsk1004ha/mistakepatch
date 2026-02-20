@@ -10,6 +10,7 @@ import {
   type MouseEvent,
   type TouchEvent,
 } from "react";
+import Image from "next/image";
 
 import { getAnalysisEventsUrl, toAbsoluteImageUrl } from "@/lib/api";
 import type {
@@ -468,7 +469,15 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
                 onTouchStart={handleImageTouchStart}
                 aria-label="감점 위치 지정 (클릭/터치)"
               >
-                <img src={imageUrl} alt="풀이" className="analysisImage" />
+                <Image
+                  src={imageUrl}
+                  alt="풀이"
+                  className="analysisImage"
+                  width={1600}
+                  height={1200}
+                  unoptimized
+                  style={{ width: "100%", height: "auto" }}
+                />
               </button>
               {overlays.map(({ mistake, index }) => {
                 const highlight = mistake.highlight;
