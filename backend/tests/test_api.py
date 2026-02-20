@@ -21,6 +21,9 @@ PNG_1X1 = base64.b64decode(
 
 
 class APITestCase(unittest.TestCase):
+    USER_A = "test_user_a"
+    USER_B = "test_user_b"
+
     def _client(self) -> TestClient:
         return TestClient(create_app())
 
@@ -30,29 +33,53 @@ class APITestCase(unittest.TestCase):
             "data": {"meta": meta},
         }
 
+    def _headers(self, user_id: str | None = None) -> dict[str, str]:
+        return {"X-User-Id": user_id or self.USER_A}
+
     def test_analyze_requires_solution_image(self) -> None:
         with self._client() as client:
-            response = client.post("/api/v1/analyze", data={"meta": '{"subject":"math"}'})
+            response = client.post(
+                "/api/v1/analyze",
+                data={"meta": '{"subject":"math"}'},
+                headers=self._headers(),
+            )
             self.assertEqual(response.status_code, 400)
             self.assertIn("solution_image", response.json()["detail"])
+
+    def test_analyze_requires_user_id_header(self) -> None:
+        with self._client() as client:
+            payload = self._multipart()
+            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("X-User-Id", response.json()["detail"])
 
     def test_analyze_rejects_invalid_meta_json(self) -> None:
         with self._client() as client:
             payload = self._multipart(meta="{not-json")
-            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            response = client.post(
+                "/api/v1/analyze",
+                files=payload["files"],
+                data=payload["data"],
+                headers=self._headers(),
+            )
             self.assertEqual(response.status_code, 400)
             self.assertIn("Invalid meta", response.json()["detail"])
 
     def test_analyze_transitions_to_done_and_supports_annotations(self) -> None:
         with self._client() as client:
             payload = self._multipart()
-            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            response = client.post(
+                "/api/v1/analyze",
+                files=payload["files"],
+                data=payload["data"],
+                headers=self._headers(),
+            )
             self.assertEqual(response.status_code, 200)
             analysis_id = response.json()["analysis_id"]
 
             detail: dict[str, Any] = {}
             for _ in range(10):
-                detail_resp = client.get(f"/api/v1/analysis/{analysis_id}")
+                detail_resp = client.get(f"/api/v1/analysis/{analysis_id}", headers=self._headers())
                 self.assertEqual(detail_resp.status_code, 200)
                 detail = detail_resp.json()
                 if detail["status"] in {"done", "failed"}:
@@ -81,6 +108,7 @@ class APITestCase(unittest.TestCase):
                     "w": 0.12,
                     "h": 0.12,
                 },
+                headers=self._headers(),
             )
             self.assertEqual(ann_resp.status_code, 200)
             self.assertEqual(ann_resp.json()["analysis_id"], analysis_id)
@@ -88,13 +116,18 @@ class APITestCase(unittest.TestCase):
     def test_analysis_detail_survives_corrupt_result_json(self) -> None:
         with self._client() as client:
             payload = self._multipart()
-            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            response = client.post(
+                "/api/v1/analyze",
+                files=payload["files"],
+                data=payload["data"],
+                headers=self._headers(),
+            )
             self.assertEqual(response.status_code, 200)
             analysis_id = response.json()["analysis_id"]
 
             detail: dict[str, Any] = {}
             for _ in range(10):
-                detail_resp = client.get(f"/api/v1/analysis/{analysis_id}")
+                detail_resp = client.get(f"/api/v1/analysis/{analysis_id}", headers=self._headers())
                 self.assertEqual(detail_resp.status_code, 200)
                 detail = detail_resp.json()
                 if detail["status"] in {"done", "failed"}:
@@ -107,7 +140,7 @@ class APITestCase(unittest.TestCase):
                 conn.execute("UPDATE analyses SET result_json = ? WHERE id = ?", ("{corrupt", analysis_id))
                 conn.commit()
 
-            corrupted = client.get(f"/api/v1/analysis/{analysis_id}")
+            corrupted = client.get(f"/api/v1/analysis/{analysis_id}", headers=self._headers())
             self.assertEqual(corrupted.status_code, 200)
             body = corrupted.json()
             self.assertIsNone(body["result"])
@@ -116,15 +149,58 @@ class APITestCase(unittest.TestCase):
     def test_history_lists_recent_items(self) -> None:
         with self._client() as client:
             payload = self._multipart(meta='{"subject":"physics","highlight_mode":"tap"}')
-            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            response = client.post(
+                "/api/v1/analyze",
+                files=payload["files"],
+                data=payload["data"],
+                headers=self._headers(),
+            )
             self.assertEqual(response.status_code, 200)
 
-            history = client.get("/api/v1/history?limit=5")
+            history = client.get("/api/v1/history?limit=5", headers=self._headers())
             self.assertEqual(history.status_code, 200)
             body = history.json()
             self.assertIn("items", body)
             self.assertGreaterEqual(len(body["items"]), 1)
             self.assertIn("top_tags", body)
+
+    def test_user_data_is_isolated(self) -> None:
+        with self._client() as client:
+            user_a = f"{self.USER_A}_{time.time_ns()}"
+            user_b = f"{self.USER_B}_{time.time_ns()}"
+            payload = self._multipart()
+            response = client.post(
+                "/api/v1/analyze",
+                files=payload["files"],
+                data=payload["data"],
+                headers=self._headers(user_a),
+            )
+            self.assertEqual(response.status_code, 200)
+            analysis_id = response.json()["analysis_id"]
+
+            for _ in range(10):
+                detail_resp = client.get(
+                    f"/api/v1/analysis/{analysis_id}",
+                    headers=self._headers(user_a),
+                )
+                self.assertEqual(detail_resp.status_code, 200)
+                detail = detail_resp.json()
+                if detail["status"] in {"done", "failed"}:
+                    break
+                time.sleep(0.2)
+
+            as_user_b = client.get(
+                f"/api/v1/analysis/{analysis_id}",
+                headers=self._headers(user_b),
+            )
+            self.assertEqual(as_user_b.status_code, 404)
+
+            history_a = client.get("/api/v1/history?limit=5", headers=self._headers(user_a))
+            history_b = client.get("/api/v1/history?limit=5", headers=self._headers(user_b))
+            self.assertEqual(history_a.status_code, 200)
+            self.assertEqual(history_b.status_code, 200)
+            self.assertGreaterEqual(len(history_a.json()["items"]), 1)
+            self.assertEqual(len(history_b.json()["items"]), 0)
 
 
 if __name__ == "__main__":

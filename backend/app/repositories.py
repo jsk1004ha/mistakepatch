@@ -12,15 +12,20 @@ def _now_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
-def create_submission(subject: str, solution_img_path: str, problem_img_path: str | None) -> str:
+def create_submission(
+    subject: str,
+    solution_img_path: str,
+    problem_img_path: str | None,
+    user_id: str,
+) -> str:
     submission_id = f"s_{uuid.uuid4().hex}"
     with transaction() as conn:
         conn.execute(
             """
-            INSERT INTO submissions (id, created_at, subject, solution_img_path, problem_img_path)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO submissions (id, user_id, created_at, subject, solution_img_path, problem_img_path)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (submission_id, _now_iso(), subject, solution_img_path, problem_img_path),
+            (submission_id, user_id, _now_iso(), subject, solution_img_path, problem_img_path),
         )
     return submission_id
 
@@ -126,22 +131,22 @@ def mark_analysis_failed(analysis_id: str, error_code: str) -> None:
         )
 
 
-def get_submission(submission_id: str) -> dict[str, Any] | None:
+def get_submission(submission_id: str, user_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         row = conn.execute(
             """
-            SELECT id, created_at, subject, solution_img_path, problem_img_path
+            SELECT id, user_id, created_at, subject, solution_img_path, problem_img_path
             FROM submissions
-            WHERE id = ?
+            WHERE id = ? AND user_id = ?
             """,
-            (submission_id,),
+            (submission_id, user_id),
         ).fetchone()
         if not row:
             return None
         return dict(row)
 
 
-def get_analysis(analysis_id: str) -> dict[str, Any] | None:
+def get_analysis(analysis_id: str, user_id: str) -> dict[str, Any] | None:
     with get_connection() as conn:
         header = conn.execute(
             """
@@ -150,9 +155,9 @@ def get_analysis(analysis_id: str) -> dict[str, Any] | None:
                    s.subject, s.solution_img_path, s.problem_img_path
             FROM analyses a
             INNER JOIN submissions s ON s.id = a.submission_id
-            WHERE a.id = ?
+            WHERE a.id = ? AND s.user_id = ?
             """,
-            (analysis_id,),
+            (analysis_id, user_id),
         ).fetchone()
         if not header:
             return None
@@ -254,20 +259,22 @@ def create_annotation(
     return annotation_id
 
 
-def mistake_exists(analysis_id: str, mistake_id: str) -> bool:
+def mistake_exists(analysis_id: str, mistake_id: str, user_id: str) -> bool:
     with get_connection() as conn:
         row = conn.execute(
             """
             SELECT 1
-            FROM mistakes
-            WHERE analysis_id = ? AND id = ?
+            FROM mistakes m
+            INNER JOIN analyses a ON a.id = m.analysis_id
+            INNER JOIN submissions s ON s.id = a.submission_id
+            WHERE m.analysis_id = ? AND m.id = ? AND s.user_id = ?
             """,
-            (analysis_id, mistake_id),
+            (analysis_id, mistake_id, user_id),
         ).fetchone()
         return row is not None
 
 
-def list_history(limit: int = 5) -> dict[str, Any]:
+def list_history(limit: int = 5, user_id: str = "legacy") -> dict[str, Any]:
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -280,21 +287,25 @@ def list_history(limit: int = 5) -> dict[str, Any]:
             FROM analyses a
             INNER JOIN submissions s ON s.id = a.submission_id
             LEFT JOIN mistakes m ON m.analysis_id = a.id AND m.order_idx = 0
+            WHERE s.user_id = ?
             ORDER BY a.created_at DESC
             LIMIT ?
             """,
-            (limit,),
+            (user_id, limit),
         ).fetchall()
         tags = conn.execute(
             """
             SELECT m.type AS type, COUNT(*) AS count
             FROM mistakes m
             INNER JOIN analyses a ON a.id = m.analysis_id
+            INNER JOIN submissions s ON s.id = a.submission_id
             WHERE a.status = 'done'
+              AND s.user_id = ?
             GROUP BY m.type
             ORDER BY count DESC
             LIMIT 3
-            """
+            """,
+            (user_id,),
         ).fetchall()
 
     return {

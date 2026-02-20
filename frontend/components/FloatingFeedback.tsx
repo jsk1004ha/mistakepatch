@@ -46,7 +46,13 @@ export function FloatingFeedback({
   const result = analysis?.result ?? null;
   const mistakes = result?.mistakes ?? [];
   const selectedMistake = mistakes[selectedIndex];
+  const totalDeduction = mistakes.reduce((sum, mistake) => {
+    const points = Number.isFinite(mistake.points_deducted) ? mistake.points_deducted : 0;
+    return sum + points;
+  }, 0);
+  const hasAutoDeduction = totalDeduction > 0.04;
   const isLikelyCorrect = Boolean(result && result.answer_verdict === "correct");
+  const showNoIssueMessage = isLikelyCorrect && !hasAutoDeduction;
 
   return (
     <aside className={`floatingFeedback ${collapsed ? "collapsed" : ""}`}>
@@ -86,8 +92,8 @@ export function FloatingFeedback({
               <p className="verdictReason" data-testid="verdict-reason">
                 {result.answer_verdict_reason}
               </p>
-              {isLikelyCorrect && (
-                <p className="okText">정답으로 판단했습니다. (자동 감점 포인트 없음)</p>
+              {showNoIssueMessage && (
+                <p className="okText">문제 없음: 정답이며 자동 감점 포인트가 없습니다.</p>
               )}
 
               {analysis?.fallback_used && (
@@ -127,7 +133,7 @@ export function FloatingFeedback({
               {activeTab === "mistakes" && (
                 <div className="cardList compact">
                   {mistakes.length === 0 && (
-                    <p className="hintText">감점 포인트를 찾지 못했습니다. 현재 풀이는 정답으로 판단됩니다.</p>
+                    <p className="hintText">감점 포인트를 찾지 못했습니다.</p>
                   )}
                   {mistakes.map((mistake, index) => (
                     <button

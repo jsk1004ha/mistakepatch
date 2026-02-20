@@ -6,6 +6,7 @@ import type {
   HighlightMode,
   Subject,
 } from "@/lib/types";
+import { getOrCreateUserId } from "@/lib/userId";
 
 export type HealthResponse = {
   status: string;
@@ -24,13 +25,16 @@ export function toAbsoluteImageUrl(relativePath: string): string {
 }
 
 export function getAnalysisEventsUrl(analysisId: string): string {
-  return `${API_BASE_URL}/api/v1/analysis/${analysisId}/events`;
+  const userId = encodeURIComponent(getOrCreateUserId());
+  return `${API_BASE_URL}/api/v1/analysis/${analysisId}/events?user_id=${userId}`;
 }
 
 async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+  const userId = getOrCreateUserId();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     headers: {
+      "X-User-Id": userId,
       ...(init?.headers ?? {}),
     },
     cache: "no-store",

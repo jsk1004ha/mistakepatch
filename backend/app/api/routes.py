@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, BackgroundTasks, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.responses import StreamingResponse
 
 from ..config import settings
@@ -36,6 +37,22 @@ from ..services.queue_manager import queue_manager
 router = APIRouter(prefix="/api/v1", tags=["v1"])
 
 ALLOWED_IMAGE_MIME = {"image/jpeg", "image/jpg", "image/png", "image/webp"}
+USER_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+
+
+def _resolve_user_id(header_user_id: str | None, query_user_id: str | None = None) -> str:
+    raw_user_id = header_user_id if header_user_id is not None else query_user_id
+    if raw_user_id is None:
+        raise HTTPException(status_code=400, detail="X-User-Id header is required.")
+    user_id = raw_user_id.strip()
+    if not user_id:
+        raise HTTPException(status_code=400, detail="X-User-Id header is required.")
+    if not USER_ID_PATTERN.fullmatch(user_id):
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid user id. Use 1-64 chars: letters, digits, dot, underscore, hyphen.",
+        )
+    return user_id
 
 
 def _validate_upload(upload: UploadFile) -> None:
@@ -94,7 +111,9 @@ async def analyze(
     solution_image: UploadFile | None = File(default=None),
     problem_image: UploadFile | None = File(default=None),
     meta: str = Form(default="{}"),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
 ) -> AnalyzeResponse:
+    user_id = _resolve_user_id(x_user_id)
     if solution_image is None:
         raise HTTPException(status_code=400, detail="solution_image is required.")
 
@@ -115,6 +134,7 @@ async def analyze(
             subject=meta_obj.subject.value,
             solution_img_path=solution_path,
             problem_img_path=problem_path,
+            user_id=user_id,
         )
         analysis_id = create_analysis(submission_id=submission_id)
     except Exception as exc:
@@ -134,6 +154,7 @@ async def analyze(
         "highlight_mode": meta_obj.highlight_mode.value,
         "solution_image_path": solution_path,
         "problem_image_path": problem_path,
+        "user_id": user_id,
     }
 
     try:
@@ -147,8 +168,12 @@ async def analyze(
 
 
 @router.get("/analysis/{analysis_id}", response_model=AnalyzeDetailResponse)
-async def analysis_detail(analysis_id: str) -> AnalyzeDetailResponse:
-    record = get_analysis(analysis_id)
+async def analysis_detail(
+    analysis_id: str,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+) -> AnalyzeDetailResponse:
+    user_id = _resolve_user_id(x_user_id)
+    record = get_analysis(analysis_id, user_id=user_id)
     if not record:
         raise HTTPException(status_code=404, detail="Analysis not found.")
 
@@ -177,15 +202,20 @@ async def analysis_detail(analysis_id: str) -> AnalyzeDetailResponse:
 
 
 @router.get("/analysis/{analysis_id}/events")
-async def analysis_events(analysis_id: str) -> StreamingResponse:
-    initial = get_analysis(analysis_id)
+async def analysis_events(
+    analysis_id: str,
+    user_id: str | None = Query(default=None),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+) -> StreamingResponse:
+    resolved_user_id = _resolve_user_id(x_user_id, user_id)
+    initial = get_analysis(analysis_id, user_id=resolved_user_id)
     if not initial:
         raise HTTPException(status_code=404, detail="Analysis not found.")
 
     async def event_stream():
         last_fingerprint: tuple[str, str | None, ProgressStep, int] | None = None
         while True:
-            record = get_analysis(analysis_id)
+            record = get_analysis(analysis_id, user_id=resolved_user_id)
             if not record:
                 break
 
@@ -221,8 +251,12 @@ async def analysis_events(analysis_id: str) -> StreamingResponse:
 
 
 @router.post("/annotations", response_model=AnnotationResponse)
-async def add_annotation(payload: AnnotationRequest) -> AnnotationResponse:
-    if not mistake_exists(payload.analysis_id, payload.mistake_id):
+async def add_annotation(
+    payload: AnnotationRequest,
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+) -> AnnotationResponse:
+    user_id = _resolve_user_id(x_user_id)
+    if not mistake_exists(payload.analysis_id, payload.mistake_id, user_id=user_id):
         raise HTTPException(status_code=404, detail="Mistake not found for this analysis.")
 
     annotation_id = create_annotation(
@@ -243,8 +277,12 @@ async def add_annotation(payload: AnnotationRequest) -> AnnotationResponse:
 
 
 @router.get("/history", response_model=HistoryResponse)
-async def history(limit: int = Query(default=5, ge=1, le=20)) -> HistoryResponse:
-    data = list_history(limit=limit)
+async def history(
+    limit: int = Query(default=5, ge=1, le=20),
+    x_user_id: str | None = Header(default=None, alias="X-User-Id"),
+) -> HistoryResponse:
+    user_id = _resolve_user_id(x_user_id)
+    data = list_history(limit=limit, user_id=user_id)
     return HistoryResponse(items=data["items"], top_tags=data["top_tags"])
 
 

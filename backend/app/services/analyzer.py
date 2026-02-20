@@ -854,8 +854,29 @@ def _parse_coefficient(token: str) -> float:
 
 
 def _extract_last_x_value(solution_text: str) -> float | None:
-    text = solution_text.lower().replace("−", "-").replace("—", "-").replace(",", ".")
+    text = _normalize_ocr_symbol_text(solution_text).lower()
+    text = text.replace(",", ".")
     candidates = re.findall(r"x\s*=\s*([^\n\r;,\]]+)", text)
+    if not candidates:
+        return None
+
+    parsed_values: list[float] = []
+    for raw in candidates:
+        expr = _normalize_numeric_expression(raw)
+        if not expr:
+            continue
+        value = _safe_eval_numeric_expression(expr)
+        if value is not None and math.isfinite(value):
+            parsed_values.append(value)
+
+    if not parsed_values:
+        return None
+    return parsed_values[-1]
+
+
+def _extract_last_rhs_numeric_value(solution_text: str) -> float | None:
+    text = _normalize_ocr_symbol_text(solution_text).replace(",", ".")
+    candidates = re.findall(r"=\s*([^\n\r;,\]]+)", text)
     if not candidates:
         return None
 
@@ -877,8 +898,10 @@ def _normalize_numeric_expression(raw: str) -> str:
     candidate = _clean_text(raw, "", 80)
     if not candidate:
         return ""
-    candidate = candidate.replace("×", "*").replace("÷", "/")
-    candidate = candidate.replace("−", "-").replace("—", "-")
+    candidate = _normalize_ocr_symbol_text(candidate)
+    candidate = _normalize_ocr_digit_text(candidate)
+    candidate = re.sub(r"(?<=\d)x(?=\d|\()", "*", candidate, flags=re.IGNORECASE)
+    candidate = re.sub(r"(?<=\))x(?=\d|\()", "*", candidate, flags=re.IGNORECASE)
     candidate = candidate.replace(",", ".")
     candidate = re.sub(r"\s+", "", candidate)
     if "x" in candidate.lower():
@@ -961,6 +984,12 @@ def _apply_correct_answer_adjustment(result: dict[str, Any], expected: float, gi
 
     confidence = _to_float(result.get("confidence")) or 0.75
     result["confidence"] = round(_clamp(max(confidence, 0.82), 0.0, 1.0), 2)
+    result["answer_verdict"] = AnswerVerdict.correct.value
+    result["answer_verdict_reason"] = _clean_text(
+        f"맞음: 단순식 검산 결과 x={given:g} (기대값 x={expected:g})",
+        "맞음: 단순식 검산 결과가 일치합니다.",
+        120,
+    )
     checklist = result.get("next_checklist")
     if isinstance(checklist, list) and checklist:
         checklist[0] = _clean_text(f"정답 확인 완료: x={expected:g}. 최종 검산 습관 유지", checklist[0], 80)
@@ -1031,6 +1060,12 @@ def _apply_wrong_answer_adjustment(result: dict[str, Any], expected: float, give
 
     confidence = _to_float(result.get("confidence")) or 0.6
     result["confidence"] = round(_clamp(min(confidence, 0.58), 0.0, 1.0), 2)
+    result["answer_verdict"] = AnswerVerdict.incorrect.value
+    result["answer_verdict_reason"] = _clean_text(
+        f"틀림: 단순식 검산 결과 x={given:g}, 기대값 x={expected:g}",
+        "틀림: 단순식 검산 결과가 일치하지 않습니다.",
+        120,
+    )
 
     checklist = [
         _clean_text("최종 답을 원식에 대입해 성립 여부 확인", "최종 답 검산 수행", 80),
@@ -1064,6 +1099,9 @@ def _build_verification_report(
     steps = _extract_solution_steps(solution_image_path)
     expected_equation = _extract_problem_equation(problem_image_path)
     parsed_expected = _parse_linear_equation(expected_equation) if expected_equation else None
+    expected_x_simple: float | None = None
+    if problem_image_path and Path(problem_image_path).exists():
+        expected_x_simple = _solve_simple_x(extract_image_text(problem_image_path))
 
     findings: list[VerificationFinding] = []
     parsed_steps: list[tuple[ExtractedStep, LinearEquation]] = []
@@ -1103,6 +1141,10 @@ def _build_verification_report(
             )
 
     observed_x = _extract_last_x_value_from_steps(steps, solution_image_path)
+    expected_x_value = _extract_solution_value_from_equation(parsed_expected)
+    if expected_x_value is None:
+        expected_x_value = expected_x_simple
+
     if parsed_expected is not None and observed_x is not None:
         residual = parsed_expected.a * observed_x + parsed_expected.b
         if abs(residual) <= 0.05:
@@ -1125,7 +1167,27 @@ def _build_verification_report(
                     counterexample=f"x={observed_x:g}, expected={expected_text}",
                 )
             )
-    elif parsed_expected is not None and observed_x is None:
+    elif expected_x_value is not None and observed_x is not None:
+        if abs(expected_x_value - observed_x) <= 0.05:
+            findings.append(
+                VerificationFinding(
+                    step_id=steps[-1].step_id if steps else "s0",
+                    rule="RULE_FINAL_SUBSTITUTION",
+                    passed=True,
+                    reason="최종 답이 추정 정답과 일치합니다.",
+                )
+            )
+        else:
+            findings.append(
+                VerificationFinding(
+                    step_id=steps[-1].step_id if steps else "s0",
+                    rule="RULE_FINAL_SUBSTITUTION",
+                    passed=False,
+                    reason="최종 답이 추정 정답과 일치하지 않습니다.",
+                    counterexample=f"x={observed_x:g}, expected=x={expected_x_value:g}",
+                )
+            )
+    elif expected_x_value is not None and observed_x is None:
         findings.append(
             VerificationFinding(
                 step_id=steps[-1].step_id if steps else "s0",
@@ -1145,15 +1207,17 @@ def _build_verification_report(
     confidence = 0.35 + 0.35 * coverage + 0.3 * pass_ratio
     if parsed_expected is None:
         confidence -= 0.08
+    if parsed_expected is None and expected_x_value is not None:
+        confidence += 0.04
     if observed_x is None:
         confidence -= 0.1
     confidence = round(_clamp(confidence, 0.0, 1.0), 2)
-    requires_review = coverage < 0.34 and parsed_expected is not None and observed_x is None
+    requires_review = coverage < 0.34 and expected_x_value is not None and observed_x is None
 
     return VerificationReport(
         steps=steps,
         findings=findings,
-        expected_x=_extract_solution_value_from_equation(parsed_expected),
+        expected_x=expected_x_value,
         observed_x=observed_x,
         confidence=confidence,
         requires_review=requires_review,
@@ -1197,28 +1261,71 @@ def _equation_candidates_from_lines(lines: list[str]) -> list[str]:
         if not line:
             continue
         for part in re.split(r"[;,]", line):
-            segment = _clean_text(part, "", 180)
-            if not re.search(r"[xX]", segment):
-                continue
-            equation = _normalize_equation_text(segment)
-            if equation and equation not in candidates:
-                candidates.append(equation)
+            for segment in _split_equation_like_segments(part):
+                if not _contains_variable_token(segment):
+                    continue
+                equation = _normalize_equation_text(segment)
+                if equation and equation not in candidates:
+                    candidates.append(equation)
     return candidates
 
 
+def _split_equation_like_segments(raw: str) -> list[str]:
+    text = _clean_text(raw, "", 180)
+    if not text:
+        return []
+    chunks = re.split(r"(?<=\d)\s+(?=[xX×✕✖χΧⅹｘ]\s*[\+\-\=])", text)
+    segments = [_clean_text(chunk, "", 180) for chunk in chunks]
+    return [item for item in segments if item]
+
+
+def _contains_variable_token(text: str) -> bool:
+    return bool(re.search(r"[xX×✕✖χΧⅹｘ]", text))
+
+
+def _normalize_ocr_symbol_text(text: str) -> str:
+    normalized = text
+    normalized = normalized.replace("−", "-").replace("—", "-").replace("–", "-")
+    normalized = normalized.replace("＝", "=")
+    normalized = normalized.replace("⇒", "=").replace("→", "=").replace("⟶", "=")
+    normalized = normalized.replace("÷", "/")
+    for token in ("×", "✕", "✖", "χ", "Χ", "ⅹ", "ｘ", "X"):
+        normalized = normalized.replace(token, "x")
+    return normalized
+
+
+def _normalize_ocr_digit_text(text: str) -> str:
+    return text.translate(
+        str.maketrans(
+            {
+                "O": "0",
+                "o": "0",
+                "I": "1",
+                "l": "1",
+                "|": "1",
+                "S": "5",
+                "B": "8",
+                "Z": "2",
+            }
+        )
+    )
+
+
 def _normalize_equation_text(text: str) -> str:
-    normalized = text.replace("−", "-").replace("—", "-")
-    normalized = normalized.replace("×", "*").replace("÷", "/")
+    normalized = _normalize_ocr_symbol_text(text)
+    normalized = _normalize_ocr_digit_text(normalized)
     normalized = normalized.replace(",", ".")
     normalized = re.sub(r"\s+", "", normalized)
-    if not _ALLOWED_EQUATION_CHARS.match(normalized):
-        return ""
-    normalized = normalized.replace("→", "=").replace("⇒", "=").replace("⟶", "=")
     normalized = normalized.replace("=>", "=").replace("->", "=")
     if normalized.count("=") == 0 and normalized.count(">") == 1:
         normalized = normalized.replace(">", "=")
+    if not _ALLOWED_EQUATION_CHARS.match(normalized):
+        return ""
     if normalized.count("=") != 1:
         return ""
+    left_raw, right_raw = normalized.split("=", 1)
+    right_raw = _normalize_ocr_digit_text(right_raw)
+    normalized = f"{left_raw}={right_raw}"
     return normalized
 
 
@@ -1238,7 +1345,8 @@ def _parse_linear_equation(equation_text: str) -> LinearEquation | None:
 
 
 def _parse_linear_expression(expression_text: str) -> LinearExpression | None:
-    normalized = expression_text.replace("−", "-").replace("—", "-")
+    normalized = _normalize_ocr_symbol_text(expression_text)
+    normalized = _normalize_ocr_digit_text(normalized)
     normalized = normalized.replace(",", ".")
     normalized = re.sub(r"\s+", "", normalized)
     normalized = re.sub(r"(\d)(x)", r"\1*x", normalized, flags=re.IGNORECASE)
@@ -1347,8 +1455,15 @@ def _extract_last_x_value_from_steps(
         extracted = _extract_last_x_value(joined)
         if extracted is not None:
             return extracted
+        extracted_rhs = _extract_last_rhs_numeric_value(joined)
+        if extracted_rhs is not None:
+            return extracted_rhs
     if Path(solution_image_path).exists():
-        return _extract_last_x_value(extract_image_text(solution_image_path))
+        text = extract_image_text(solution_image_path)
+        extracted = _extract_last_x_value(text)
+        if extracted is not None:
+            return extracted
+        return _extract_last_rhs_numeric_value(text)
     return None
 
 
@@ -1746,14 +1861,16 @@ def _reconcile_score_from_deductions(result: dict[str, Any]) -> None:
 def _apply_answer_verdict_policy(result: dict[str, Any], report: VerificationReport) -> None:
     verdict, reason = _derive_answer_verdict(report)
     current_score = _to_float(result.get("score_total")) or 0.0
-    if verdict == AnswerVerdict.unknown.value:
-        # Fallback when symbolic verification is unavailable: infer from current score band.
-        if current_score < 7.0:
-            verdict = AnswerVerdict.incorrect.value
-            reason = "오답 추정: 검증 정보 부족, 현재 점수 대역(<7)"
-        else:
-            verdict = AnswerVerdict.correct.value
-            reason = "정답 추정: 검증 정보 부족, 현재 점수 대역(>=7)"
+    existing_verdict = _normalize_answer_verdict(result.get("answer_verdict"))
+    used_existing_signal = False
+    if verdict == AnswerVerdict.unknown.value and existing_verdict in {
+        AnswerVerdict.correct.value,
+        AnswerVerdict.incorrect.value,
+    }:
+        verdict = existing_verdict
+        used_existing_signal = True
+
+    reason = _stable_verdict_reason(verdict, report, used_existing_signal=used_existing_signal)
 
     result["answer_verdict"] = verdict
     result["answer_verdict_reason"] = _clean_text(reason, "정오 판단 정보가 부족합니다.", 120)
@@ -1789,6 +1906,22 @@ def _derive_answer_verdict(report: VerificationReport) -> tuple[str, str]:
         if item.passed:
             return (AnswerVerdict.correct.value, "맞음: 최종 답 대입 검증 통과")
 
+    transform_failures = [
+        item
+        for item in report.findings
+        if item.rule == "RULE_EQUIV_TRANSFORM" and (not item.passed) and bool(item.counterexample)
+    ]
+    if transform_failures:
+        finding = transform_failures[0]
+        return (
+            AnswerVerdict.incorrect.value,
+            _clean_text(
+                f"틀림: 단계 식 변형 불일치 ({finding.counterexample})",
+                "틀림: 단계 식 변형에서 동치가 깨졌습니다.",
+                120,
+            ),
+        )
+
     if report.expected_x is not None and report.observed_x is not None:
         if abs(report.expected_x - report.observed_x) <= 0.05:
             return (AnswerVerdict.correct.value, "맞음: 추정 해와 최종 답이 일치")
@@ -1802,6 +1935,35 @@ def _derive_answer_verdict(report: VerificationReport) -> tuple[str, str]:
         )
 
     return (AnswerVerdict.unknown.value, "정오 판단 보류: 검증 정보 부족")
+
+
+def _stable_verdict_reason(
+    verdict: str,
+    report: VerificationReport,
+    *,
+    used_existing_signal: bool = False,
+) -> str:
+    if verdict == AnswerVerdict.correct.value:
+        if used_existing_signal:
+            return "맞음: 보조 검산 기준에서 일치가 확인되었습니다."
+        if any(item.rule == "RULE_FINAL_SUBSTITUTION" and item.passed for item in report.findings):
+            return "맞음: 최종 답 검증을 통과했습니다."
+        if report.expected_x is not None and report.observed_x is not None:
+            return "맞음: 최종 답이 정답과 일치합니다."
+        return "맞음: 검증 기준에서 정답으로 판단했습니다."
+
+    if verdict == AnswerVerdict.incorrect.value:
+        if used_existing_signal:
+            return "틀림: 보조 검산 기준에서 불일치가 확인되었습니다."
+        if any((not item.passed) and item.rule == "RULE_FINAL_SUBSTITUTION" for item in report.findings):
+            return "틀림: 최종 답 검증에서 불일치가 확인되었습니다."
+        if any((not item.passed) and item.rule == "RULE_EQUIV_TRANSFORM" for item in report.findings):
+            return "틀림: 중간 식 변형에서 동치가 깨졌습니다."
+        if report.expected_x is not None and report.observed_x is not None:
+            return "틀림: 최종 답이 정답과 일치하지 않습니다."
+        return "틀림: 검증 근거에서 오답 신호가 확인되었습니다."
+
+    return "정오 판단 보류: 검증 정보 부족"
 
 
 def _estimate_logic_quality(result: dict[str, Any], report: VerificationReport) -> float:
@@ -1853,6 +2015,23 @@ def _ensure_mistake_coverage(result: dict[str, Any], report: VerificationReport)
     mistakes = [dict(item) for item in mistakes_raw if isinstance(item, dict)] if isinstance(mistakes_raw, list) else []
     # Drop display-only zero deductions; actual deduction factors must be positive.
     mistakes = [item for item in mistakes if (_to_float(item.get("points_deducted")) or 0.0) > 0.04]
+    verdict = _normalize_answer_verdict(result.get("answer_verdict"))
+    has_failed_finding = any(not finding.passed for finding in report.findings)
+
+    # Verified-correct paths should not receive synthetic deduction cards generated
+    # only to fit score narratives.
+    if verdict == AnswerVerdict.correct.value and not has_failed_finding:
+        mistakes.sort(key=lambda item: _to_float(item.get("points_deducted")) or 0.0, reverse=True)
+        result["mistakes"] = mistakes[:20]
+        if mistakes:
+            total_deduction = _round_to_tenth(
+                sum((_to_float(item.get("points_deducted")) or 0.0) for item in result["mistakes"])
+            )
+            score_ceiling = _round_to_tenth(_clamp(10.0 - total_deduction, 0.0, 10.0))
+            current_score = _round_to_tenth(_to_float(result.get("score_total")) or 0.0)
+            if current_score > score_ceiling:
+                result["score_total"] = score_ceiling
+        return
 
     score_total = _round_to_tenth(_clamp(_to_float(result.get("score_total")) or 0.0, 0.0, 10.0))
     target_deduction = _round_to_tenth(10.0 - score_total)

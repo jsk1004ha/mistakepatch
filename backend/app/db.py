@@ -27,6 +27,18 @@ def get_connection() -> sqlite3.Connection:
     return conn
 
 
+def _table_has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
+    rows = conn.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(row["name"] == column_name for row in rows)
+
+
+def _migrate_submissions_user_id(conn: sqlite3.Connection) -> None:
+    if _table_has_column(conn, "submissions", "user_id"):
+        return
+    conn.execute("ALTER TABLE submissions ADD COLUMN user_id TEXT NOT NULL DEFAULT 'legacy'")
+    conn.execute("UPDATE submissions SET user_id = 'legacy' WHERE user_id IS NULL OR user_id = ''")
+
+
 @contextmanager
 def transaction() -> sqlite3.Connection:
     conn = get_connection()
@@ -46,6 +58,7 @@ def init_db() -> None:
             """
             CREATE TABLE IF NOT EXISTS submissions (
                 id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
                 created_at TEXT NOT NULL,
                 subject TEXT NOT NULL,
                 solution_img_path TEXT NOT NULL,
@@ -95,9 +108,12 @@ def init_db() -> None:
                 FOREIGN KEY (mistake_id) REFERENCES mistakes(id) ON DELETE CASCADE
             );
 
-            CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at DESC);
             CREATE INDEX IF NOT EXISTS idx_mistakes_analysis_id ON mistakes(analysis_id, order_idx);
             CREATE INDEX IF NOT EXISTS idx_annotations_analysis_id ON annotations(analysis_id);
             """
         )
-
+        _migrate_submissions_user_id(conn)
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_submissions_user_created_at ON submissions(user_id, created_at DESC)"
+        )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_analyses_created_at ON analyses(created_at DESC)")

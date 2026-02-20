@@ -116,3 +116,7 @@ npm run test:e2e
 - `POST /api/v1/annotations`
 - `GET /api/v1/history?limit=5`
 - `GET /api/v1/health`
+
+인증/격리 참고:
+- `/api/v1/health`를 제외한 API는 `X-User-Id` 헤더가 필요합니다.
+- 동일 백엔드 인스턴스에서 사용자 데이터는 `X-User-Id` 기준으로 분리 조회됩니다.

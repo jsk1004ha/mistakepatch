@@ -16,6 +16,7 @@ from app.services.analyzer import (
     _apply_verified_wrong_final_cap,
     _collapse_same_line_boxes,
     _ensure_mistake_coverage,
+    _extract_last_rhs_numeric_value,
     _extract_last_x_value,
     _apply_uncertainty_policy,
     _dedupe_mistakes_by_step_rule,
@@ -146,6 +147,14 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
         self.assertEqual(_extract_last_x_value(text), 3.0)
         text2 = "x+1=4\nx=4+1"
         self.assertEqual(_extract_last_x_value(text2), 5.0)
+
+    def test_extract_last_rhs_numeric_value_without_variable_symbol(self) -> None:
+        text = "k+1=4\nk=4+1\nk=5"
+        self.assertEqual(_extract_last_rhs_numeric_value(text), 5.0)
+
+    def test_extract_last_rhs_numeric_value_handles_ocr_digit_noise(self) -> None:
+        text = "x+1=4\nx=4+l\nx=S"
+        self.assertEqual(_extract_last_rhs_numeric_value(text), 5.0)
 
     def test_reconcile_score_from_deductions_caps_only(self) -> None:
         result = {
@@ -407,7 +416,43 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
         self.assertEqual(result["answer_verdict"], "correct")
         self.assertGreaterEqual(result["score_total"], 7.0)
 
-    def test_answer_verdict_policy_fallback_for_unknown_uses_score_band(self) -> None:
+    def test_answer_verdict_policy_marks_incorrect_on_transform_counterexample(self) -> None:
+        result = {
+            "score_total": 8.8,
+            "rubric_scores": {
+                "conditions": 1.8,
+                "modeling": 1.8,
+                "logic": 1.5,
+                "calculation": 1.8,
+                "final": 1.9,
+            },
+            "mistakes": [],
+        }
+        report = VerificationReport(
+            steps=[
+                ExtractedStep(step_id="s1", text="x+1=4", equation="x+1=4"),
+                ExtractedStep(step_id="s2", text="x=4+1", equation="x=4+1"),
+                ExtractedStep(step_id="s3", text="x=5", equation="x=5"),
+            ],
+            findings=[
+                VerificationFinding(
+                    step_id="s2",
+                    rule="RULE_EQUIV_TRANSFORM",
+                    passed=False,
+                    reason="연속 식 변형 전후의 해가 일치하지 않습니다.",
+                    counterexample="s1=x=3, s2=x=5",
+                ),
+            ],
+            expected_x=None,
+            observed_x=5.0,
+            confidence=0.85,
+            requires_review=False,
+        )
+        _apply_answer_verdict_policy(result, report)
+        self.assertEqual(result["answer_verdict"], "incorrect")
+        self.assertIn("중간 식 변형", result["answer_verdict_reason"])
+
+    def test_answer_verdict_policy_keeps_unknown_when_verification_missing(self) -> None:
         result = {
             "score_total": 2.5,
             "rubric_scores": {
@@ -428,7 +473,59 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
             requires_review=False,
         )
         _apply_answer_verdict_policy(result, report)
+        self.assertEqual(result["answer_verdict"], "unknown")
+        self.assertIn("검증 정보 부족", result["answer_verdict_reason"])
+
+    def test_answer_verdict_policy_does_not_promote_unknown_to_correct_by_score(self) -> None:
+        result = {
+            "score_total": 9.3,
+            "rubric_scores": {
+                "conditions": 1.8,
+                "modeling": 1.8,
+                "logic": 1.9,
+                "calculation": 1.8,
+                "final": 2.0,
+            },
+            "mistakes": [],
+        }
+        report = VerificationReport(
+            steps=[],
+            findings=[],
+            expected_x=None,
+            observed_x=None,
+            confidence=0.6,
+            requires_review=False,
+        )
+        _apply_answer_verdict_policy(result, report)
+        self.assertEqual(result["answer_verdict"], "unknown")
+        self.assertNotEqual(result["answer_verdict"], "correct")
+        self.assertEqual(result["score_total"], 9.3)
+
+    def test_answer_verdict_policy_preserves_existing_incorrect_signal(self) -> None:
+        result = {
+            "score_total": 5.0,
+            "answer_verdict": "incorrect",
+            "answer_verdict_reason": "틀림: 단순식 검산 결과 x=5, 기대값 x=3",
+            "rubric_scores": {
+                "conditions": 1.0,
+                "modeling": 1.0,
+                "logic": 1.0,
+                "calculation": 1.0,
+                "final": 0.8,
+            },
+            "mistakes": [],
+        }
+        report = VerificationReport(
+            steps=[],
+            findings=[],
+            expected_x=None,
+            observed_x=None,
+            confidence=0.4,
+            requires_review=False,
+        )
+        _apply_answer_verdict_policy(result, report)
         self.assertEqual(result["answer_verdict"], "incorrect")
+        self.assertIn("보조 검산", result["answer_verdict_reason"])
 
     def test_ensure_mistake_coverage_fills_deduction_gap(self) -> None:
         result = {
@@ -524,6 +621,39 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
         self.assertEqual(round(sum(deductions), 1), 9.2)
         self.assertEqual(result["score_total"], 0.8)
         self.assertTrue(all(abs((p * 10) - round(p * 10)) < 1e-8 for p in deductions))
+
+    def test_ensure_mistake_coverage_skips_synthetic_for_verified_correct(self) -> None:
+        result = {
+            "score_total": 9.5,
+            "answer_verdict": "correct",
+            "rubric_scores": {
+                "conditions": 2.0,
+                "modeling": 2.0,
+                "logic": 1.5,
+                "calculation": 2.0,
+                "final": 2.0,
+            },
+            "mistakes": [],
+        }
+        report = VerificationReport(
+            steps=[],
+            findings=[
+                VerificationFinding(
+                    step_id="s3",
+                    rule="RULE_FINAL_SUBSTITUTION",
+                    passed=True,
+                    reason="대입 성립",
+                    counterexample=None,
+                )
+            ],
+            expected_x=3.0,
+            observed_x=3.0,
+            confidence=0.8,
+            requires_review=False,
+        )
+        _ensure_mistake_coverage(result, report)
+        self.assertEqual(result["mistakes"], [])
+        self.assertEqual(result["score_total"], 9.5)
 
     def test_collapse_same_line_boxes_merges_overlap(self) -> None:
         merged = _collapse_same_line_boxes(
