@@ -8,6 +8,8 @@ sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.models import MistakeType, Severity
 from app.services.analyzer import (
+    _apply_highlight_mode_policy,
+    _apply_suggestion_penalty_policy,
     ConsensusMeta,
     ExtractedStep,
     VerificationFinding,
@@ -22,6 +24,9 @@ from app.services.analyzer import (
     _dedupe_mistakes_by_step_rule,
     _enforce_evidence_gate,
     _equations_equivalent,
+    _infer_unknown_verdict_from_deductions,
+    _normalize_mistake,
+    _compact_feedback_text,
     _normalize_equation_text,
     _parse_linear_equation,
     _reconcile_score_from_deductions,
@@ -452,7 +457,7 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
         self.assertEqual(result["answer_verdict"], "incorrect")
         self.assertIn("중간 식 변형", result["answer_verdict_reason"])
 
-    def test_answer_verdict_policy_keeps_unknown_when_verification_missing(self) -> None:
+    def test_answer_verdict_policy_defaults_to_incorrect_when_verification_missing_low_score(self) -> None:
         result = {
             "score_total": 2.5,
             "rubric_scores": {
@@ -473,10 +478,10 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
             requires_review=False,
         )
         _apply_answer_verdict_policy(result, report)
-        self.assertEqual(result["answer_verdict"], "unknown")
-        self.assertIn("검증 정보 부족", result["answer_verdict_reason"])
+        self.assertEqual(result["answer_verdict"], "incorrect")
+        self.assertIn("틀림", result["answer_verdict_reason"])
 
-    def test_answer_verdict_policy_does_not_promote_unknown_to_correct_by_score(self) -> None:
+    def test_answer_verdict_policy_promotes_to_correct_by_score_when_no_deduction(self) -> None:
         result = {
             "score_total": 9.3,
             "rubric_scores": {
@@ -497,11 +502,10 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
             requires_review=False,
         )
         _apply_answer_verdict_policy(result, report)
-        self.assertEqual(result["answer_verdict"], "unknown")
-        self.assertNotEqual(result["answer_verdict"], "correct")
-        self.assertEqual(result["score_total"], 9.3)
+        self.assertEqual(result["answer_verdict"], "correct")
+        self.assertGreaterEqual(result["score_total"], 7.0)
 
-    def test_answer_verdict_policy_preserves_existing_incorrect_signal(self) -> None:
+    def test_answer_verdict_policy_keeps_incorrect_without_verification_on_low_score(self) -> None:
         result = {
             "score_total": 5.0,
             "answer_verdict": "incorrect",
@@ -525,9 +529,87 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
         )
         _apply_answer_verdict_policy(result, report)
         self.assertEqual(result["answer_verdict"], "incorrect")
-        self.assertIn("보조 검산", result["answer_verdict_reason"])
+        self.assertIn("틀림", result["answer_verdict_reason"])
 
-    def test_ensure_mistake_coverage_fills_deduction_gap(self) -> None:
+    def test_infer_unknown_verdict_from_deductions_marks_incorrect(self) -> None:
+        result = {
+            "mistakes": [
+                {
+                    "type": MistakeType.logic_gap.value,
+                    "severity": Severity.high.value,
+                    "points_deducted": 1.2,
+                    "evidence": "근거",
+                    "fix_instruction": "검토",
+                    "location_hint": "중간",
+                    "highlight": {"mode": "tap", "shape": "circle"},
+                }
+            ]
+        }
+        inferred = _infer_unknown_verdict_from_deductions(result)
+        self.assertIsNotNone(inferred)
+        assert inferred is not None
+        self.assertEqual(inferred[0], "incorrect")
+
+    def test_infer_unknown_verdict_from_small_deduction_can_keep_correct(self) -> None:
+        result = {
+            "score_total": 9.0,
+            "mistakes": [
+                {
+                    "type": MistakeType.logic_gap.value,
+                    "severity": Severity.low.value,
+                    "points_deducted": 0.4,
+                    "evidence": "근거",
+                    "fix_instruction": "더 나은 풀이 제안: 근거를 보강하세요.",
+                    "location_hint": "중간",
+                    "highlight": {"mode": "tap", "shape": "circle"},
+                }
+            ],
+        }
+        inferred = _infer_unknown_verdict_from_deductions(result)
+        self.assertIsNotNone(inferred)
+        assert inferred is not None
+        self.assertEqual(inferred[0], "correct")
+
+    def test_apply_suggestion_penalty_policy_caps_deduction_for_correct(self) -> None:
+        result = {
+            "answer_verdict": "correct",
+            "score_total": 8.8,
+            "mistakes": [
+                {
+                    "type": MistakeType.logic_gap.value,
+                    "severity": Severity.low.value,
+                    "points_deducted": 1.1,
+                    "evidence": "근거",
+                    "fix_instruction": "더 나은 풀이 제안: 근거를 보강하세요.",
+                    "location_hint": "중간",
+                    "highlight": {"mode": "tap", "shape": "circle"},
+                }
+            ],
+        }
+        _apply_suggestion_penalty_policy(result)
+        self.assertLessEqual(result["mistakes"][0]["points_deducted"], 0.5)
+        self.assertGreaterEqual(result["score_total"], 9.5)
+
+    def test_normalize_mistake_retargets_definition_error(self) -> None:
+        normalized = _normalize_mistake(
+            {
+                "type": MistakeType.logic_gap.value,
+                "severity": Severity.med.value,
+                "points_deducted": 0.7,
+                "evidence": "지수법칙 정의를 잘못 적용했습니다.",
+                "fix_instruction": "법칙 적용 조건을 확인하세요.",
+                "location_hint": "중간",
+                "highlight": {"mode": "tap", "shape": "circle"},
+            }
+        )
+        self.assertEqual(normalized["type"], MistakeType.definition_confusion.value)
+
+    def test_compact_feedback_text_preserves_math_parentheses(self) -> None:
+        text = "거듭제곱근과 분수지수의 정의를 다시 써 보고, 9^1/4) 형태는 9^(1/4)로 정리하세요."
+        compacted = _compact_feedback_text(text, 36)
+        self.assertLessEqual(compacted.count(")"), compacted.count("("))
+
+    def test_ensure_mistake_coverage_adds_synthetic_without_verified_failure(self) -> None:
         result = {
             "score_total": 0.8,
             "rubric_scores": {
@@ -558,11 +640,8 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
             requires_review=False,
         )
         _ensure_mistake_coverage(result, report)
-        deductions = [m["points_deducted"] for m in result["mistakes"]]
-        self.assertTrue(all(p > 0 for p in deductions))
-        self.assertGreaterEqual(len(result["mistakes"]), 3)
-        total_deduction = sum(deductions)
-        self.assertAlmostEqual(total_deduction, 9.2, delta=0.05)
+        self.assertGreater(len(result["mistakes"]), 0)
+        self.assertAlmostEqual(sum(m["points_deducted"] for m in result["mistakes"]), 9.2, places=1)
         self.assertEqual(result["score_total"], 0.8)
 
     def test_ensure_mistake_coverage_normalizes_overflow_sum(self) -> None:
@@ -622,7 +701,7 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
         self.assertEqual(result["score_total"], 0.8)
         self.assertTrue(all(abs((p * 10) - round(p * 10)) < 1e-8 for p in deductions))
 
-    def test_ensure_mistake_coverage_skips_synthetic_for_verified_correct(self) -> None:
+    def test_ensure_mistake_coverage_adds_synthetic_for_verified_correct_when_score_deducted(self) -> None:
         result = {
             "score_total": 9.5,
             "answer_verdict": "correct",
@@ -652,8 +731,30 @@ class AnalyzerGuardrailsTestCase(unittest.TestCase):
             requires_review=False,
         )
         _ensure_mistake_coverage(result, report)
-        self.assertEqual(result["mistakes"], [])
+        self.assertEqual(len(result["mistakes"]), 1)
+        self.assertAlmostEqual(result["mistakes"][0]["points_deducted"], 0.5, places=1)
         self.assertEqual(result["score_total"], 9.5)
+
+    def test_apply_highlight_mode_policy_forces_tap_mode(self) -> None:
+        result = {
+            "mistakes": [
+                {
+                    "highlight": {
+                        "mode": "ocr_box",
+                        "shape": "box",
+                        "x": 0.5,
+                        "y": 0.4,
+                        "w": 0.2,
+                        "h": 0.1,
+                    }
+                }
+            ]
+        }
+        _apply_highlight_mode_policy(result, "tap")
+        highlight = result["mistakes"][0]["highlight"]
+        self.assertEqual(highlight["mode"], "tap")
+        self.assertIsNone(highlight["x"])
+        self.assertIsNone(highlight["y"])
 
     def test_collapse_same_line_boxes_merges_overlap(self) -> None:
         merged = _collapse_same_line_boxes(

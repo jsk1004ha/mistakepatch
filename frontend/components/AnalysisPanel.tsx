@@ -13,6 +13,7 @@ import {
 import Image from "next/image";
 
 import { getAnalysisEventsUrl, toAbsoluteImageUrl } from "@/lib/api";
+import { formatMistakeType } from "@/lib/mistakeTypeLabels";
 import type {
   AnswerVerdict,
   AnalysisDetail,
@@ -21,6 +22,7 @@ import type {
   Mistake,
   ProgressStep,
 } from "@/lib/types";
+import { MathText } from "@/components/MathText";
 
 type ResultTab = "mistakes" | "patch" | "checklist";
 type CompareMode = "slider" | "overlay";
@@ -58,6 +60,7 @@ function clamp(value: number, min: number, max: number): number {
 
 function hasBox(mistake: Mistake): boolean {
   const h = mistake.highlight;
+  if (mistake.points_deducted <= 0.04) return false;
   return (
     typeof h.x === "number" &&
     typeof h.y === "number" &&
@@ -216,13 +219,35 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
   const lastReloadTokenRef = useRef<string | null>(null);
 
   const result = analysis.result;
+  const patchChanges = result?.patch?.minimal_changes ?? [];
   const analysisId = analysis.analysis_id;
   const mistakes = useMemo(() => result?.mistakes ?? [], [result?.mistakes]);
-  const selectedMistake = mistakes[selectedIndex];
+  const displayMistakes = useMemo(() => {
+    if (!result) return mistakes;
+    if (mistakes.length > 0) return mistakes;
+
+    const inferredPoints = Math.round(Math.max(0, 10 - result.score_total) * 10) / 10;
+    if (inferredPoints <= 0.04) return mistakes;
+
+    const firstPatch = patchChanges[0];
+    const inferred: Mistake = {
+      type: "LOGIC_GAP",
+      severity: inferredPoints >= 1.0 ? "med" : "low",
+      points_deducted: inferredPoints,
+      evidence: result.answer_verdict_reason || "총점 기준 감점이 반영되었습니다.",
+      fix_instruction:
+        firstPatch?.change || "더 나은 풀이 제안: 패치 탭의 최소 수정안을 확인해 근거를 보강하세요.",
+      location_hint: "풀이 중간 구간",
+      highlight: { mode: "ocr_box", shape: "box" },
+    };
+    return [inferred];
+  }, [mistakes, patchChanges, result]);
+  const activeIndex = selectedIndex >= 0 && selectedIndex < displayMistakes.length ? selectedIndex : 0;
+  const selectedMistake = displayMistakes[activeIndex];
   const imageUrl = toAbsoluteImageUrl(analysis.solution_image_url);
   const fallbackHint = getFallbackHint(analysis.error_code);
   const selectedPatchChange =
-    result?.patch.minimal_changes[selectedIndex] ?? result?.patch.minimal_changes[0] ?? null;
+    patchChanges[activeIndex] ?? patchChanges[0] ?? null;
   const patchPreviewText = selectedPatchChange?.change ?? selectedMistake?.fix_instruction ?? "";
   const patchTextOpacity =
     compareMode === "slider" ? clamp(compareRatio / 100, 0, 1) : clamp(overlayOpacity / 100, 0.1, 1);
@@ -232,10 +257,10 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
 
   const overlays = useMemo(
     () =>
-      mistakes
+      displayMistakes
         .map((mistake, index) => ({ mistake, index }))
         .filter(({ mistake }) => hasBox(mistake)),
-    [mistakes],
+    [displayMistakes],
   );
 
   const progressState = useMemo(
@@ -277,9 +302,9 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
   }, [analysisId]);
 
   useEffect(() => {
-    if (selectedIndex < mistakes.length) return;
-    setSelectedIndex(Math.max(0, mistakes.length - 1));
-  }, [mistakes.length, selectedIndex]);
+    if (selectedIndex < displayMistakes.length) return;
+    setSelectedIndex(Math.max(0, displayMistakes.length - 1));
+  }, [displayMistakes.length, selectedIndex]);
 
   useEffect(() => {
     if (!isAnalyzing) return;
@@ -459,7 +484,9 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
               <span>
                 {formatVerdictLabel(result.answer_verdict)} | 신뢰도 {(result.confidence * 100).toFixed(0)}%
               </span>
-              <span>{result.answer_verdict_reason}</span>
+              <span>
+                <MathText text={result.answer_verdict_reason} />
+              </span>
             </div>
             <div className="imageWrap">
               <button
@@ -485,7 +512,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
                   <span
                     key={`${mistake.mistake_id ?? index}-overlay`}
                     className={`overlay ${highlight.shape ?? "circle"} ${
-                      index === selectedIndex ? "selected" : ""
+                      index === activeIndex ? "selected" : ""
                     }`}
                     style={{
                       left: `${(highlight.x ?? 0) * 100}%`,
@@ -512,14 +539,16 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
                 <div className="compareCallout" style={compareCalloutStyle}>
                   <span className="compareTag mistake">감점</span>
                   <p className="compareText mistake" style={{ opacity: mistakeTextOpacity }}>
-                    {selectedMistake.evidence}
+                    <MathText text={selectedMistake.evidence} />
                   </p>
                   <span className="compareTag patch">패치</span>
                   <p className="compareText patch" style={{ opacity: patchTextOpacity }}>
-                    {patchPreviewText}
+                    <MathText text={patchPreviewText} />
                   </p>
                   {selectedPatchChange?.rationale && (
-                    <p className="compareRationale">{selectedPatchChange.rationale}</p>
+                    <p className="compareRationale">
+                      <MathText text={selectedPatchChange.rationale} />
+                    </p>
                   )}
                 </div>
               )}
@@ -556,19 +585,33 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
 
             {activeTab === "mistakes" && (
               <div className="cardList">
-                {mistakes.map((mistake, index) => (
+                {displayMistakes.length === 0 && (
+                    <>
+                      <p className="hintText">감점 포인트를 찾지 못했습니다.</p>
+                    {patchChanges.length > 0 && (
+                      <button type="button" className="ghostBtn" onClick={() => setActiveTab("patch")}>
+                        패치 탭으로 이동
+                      </button>
+                    )}
+                  </>
+                )}
+                {displayMistakes.map((mistake, index) => (
                   <button
                     type="button"
                     key={mistake.mistake_id ?? `${mistake.type}-${index}`}
-                    className={`mistakeCard ${index === selectedIndex ? "active" : ""}`}
+                    className={`mistakeCard ${index === activeIndex ? "active" : ""}`}
                     onClick={() => setSelectedIndex(index)}
                   >
                     <div className="cardTop">
-                      <strong>{mistake.type}</strong>
+                      <strong title={mistake.type}>{formatMistakeType(mistake.type)}</strong>
                       <span>{formatDeductionLabel(mistake.points_deducted)}</span>
                     </div>
-                    <p>{mistake.evidence}</p>
-                    <p className="fixText">{mistake.fix_instruction}</p>
+                    <p>
+                      <MathText text={mistake.evidence} />
+                    </p>
+                    <p className="fixText">
+                      <MathText text={mistake.fix_instruction} />
+                    </p>
                   </button>
                 ))}
               </div>
@@ -625,20 +668,28 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
                     비교 뷰를 쓰려면 감점 포인트 위치가 필요합니다. 감점 탭에서 항목을 선택하고 이미지를 탭하세요.
                   </p>
                 )}
-                {result.patch.minimal_changes.map((change, index) => (
+                {patchChanges.map((change, index) => (
                   <div key={`${index}-${change.change}`} className="patchItem">
-                    <strong>{change.change}</strong>
-                    <p>{change.rationale}</p>
+                    <strong>
+                      <MathText text={change.change} />
+                    </strong>
+                    <p>
+                      <MathText text={change.rationale} />
+                    </p>
                   </div>
                 ))}
-                <p className="patchedBrief">{result.patch.patched_solution_brief}</p>
+                <p className="patchedBrief">
+                  <MathText text={result.patch.patched_solution_brief} />
+                </p>
               </div>
             )}
 
             {activeTab === "checklist" && (
               <ol className="checklist">
                 {result.next_checklist.map((item) => (
-                  <li key={item}>{item}</li>
+                  <li key={item}>
+                    <MathText text={item} />
+                  </li>
                 ))}
               </ol>
             )}

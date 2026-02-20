@@ -11,6 +11,8 @@ const EMPTY_HISTORY: HistoryResponse = {
   items: [],
   top_tags: [],
 };
+const ANALYSIS_POLL_INTERVAL_MS = 1200;
+const ANALYSIS_POLL_MAX_ATTEMPTS = 120; // ~144s
 
 type FeedbackTab = "mistakes" | "patch" | "checklist";
 
@@ -25,6 +27,22 @@ interface UseAnalysisFlowParams {
   setError: (message: string | null) => void;
   setInfo: (message: string | null) => void;
   persistAutoSavedNote: (detail: AnalysisDetail) => void;
+}
+
+function resolveDefaultTab(detail: AnalysisDetail): FeedbackTab {
+  const result = detail.result;
+  if (!result) return "mistakes";
+
+  const hasMistakes = Array.isArray(result.mistakes) && result.mistakes.length > 0;
+  if (hasMistakes) return "mistakes";
+
+  const hasPatch = Array.isArray(result.patch?.minimal_changes) && result.patch.minimal_changes.length > 0;
+  if (hasPatch) return "patch";
+
+  const hasChecklist = Array.isArray(result.next_checklist) && result.next_checklist.length > 0;
+  if (hasChecklist) return "checklist";
+
+  return "mistakes";
 }
 
 export function useAnalysisFlow({
@@ -50,20 +68,36 @@ export function useAnalysisFlow({
 
   const pollAnalysis = useCallback(
     async (analysisId: string) => {
-      for (let attempt = 0; attempt < 40; attempt += 1) {
+      for (let attempt = 0; attempt < ANALYSIS_POLL_MAX_ATTEMPTS; attempt += 1) {
         const detail = await fetchAnalysis(analysisId);
         setAnalysis(detail);
         if (detail.status === "done" || detail.status === "failed") {
+          setActiveTab(resolveDefaultTab(detail));
           if (detail.status === "done") {
             persistAutoSavedNote(detail);
           }
           await refreshHistory();
           return;
         }
-        await wait(1200);
+        await wait(ANALYSIS_POLL_INTERVAL_MS);
       }
+
+      // Slow analyses can exceed the short polling window even when backend eventually succeeds.
+      const tail = await fetchAnalysis(analysisId);
+      setAnalysis(tail);
+      if (tail.status === "done" || tail.status === "failed") {
+        setActiveTab(resolveDefaultTab(tail));
+        if (tail.status === "done") {
+          persistAutoSavedNote(tail);
+        }
+        await refreshHistory();
+        return;
+      }
+
+      await refreshHistory();
+      setInfo("분석 시간이 길어지고 있습니다. 최근 분석에서 다시 열어 확인해 주세요.");
     },
-    [persistAutoSavedNote, refreshHistory],
+    [persistAutoSavedNote, refreshHistory, setActiveTab, setInfo],
   );
 
   useEffect(() => {
@@ -85,6 +119,9 @@ export function useAnalysisFlow({
     return mistakes
       .map((mistake, index) => {
         const h = mistake.highlight;
+        if (mistake.points_deducted <= 0.04) {
+          return null;
+        }
         if (typeof h.x !== "number" || typeof h.y !== "number" || typeof h.w !== "number" || typeof h.h !== "number") {
           return null;
         }
@@ -136,6 +173,9 @@ export function useAnalysisFlow({
       try {
         const detail = await fetchAnalysis(analysisId);
         setAnalysis(detail);
+        if (detail.status === "done" || detail.status === "failed") {
+          setActiveTab(resolveDefaultTab(detail));
+        }
         if (detail.status === "queued" || detail.status === "processing") {
           await pollAnalysis(analysisId);
         }

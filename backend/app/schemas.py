@@ -58,15 +58,15 @@ ANALYSIS_RESULT_JSON_SCHEMA: dict = {
                     "location_hint": {"type": "string", "maxLength": 120},
                     "highlight": {
                         "type": "object",
-                        "required": ["mode"],
+                        "required": ["mode", "shape", "x", "y", "w", "h"],
                         "additionalProperties": False,
                         "properties": {
                             "mode": {"type": "string", "enum": ["tap", "ocr_box", "region_box"]},
                             "shape": {"type": "string", "enum": ["circle", "box"]},
-                            "x": {"type": "number"},
-                            "y": {"type": "number"},
-                            "w": {"type": "number"},
-                            "h": {"type": "number"},
+                            "x": {"type": ["number", "null"]},
+                            "y": {"type": ["number", "null"]},
+                            "w": {"type": ["number", "null"]},
+                            "h": {"type": ["number", "null"]},
                         },
                     },
                 },
@@ -137,7 +137,7 @@ Verdict policy:
 
 Highlight policy:
 - Use highlight.mode="tap" when exact region is uncertain.
-- Include x/y/w/h only if you have enough confidence.
+- Set x/y/w/h to null when you are not confident about exact coordinates.
 
 Confidence policy:
 - If handwriting or image quality is low, lower confidence and populate missing_info.

@@ -125,13 +125,71 @@ def process_analysis_job(payload: dict[str, Any]) -> None:
         problem_image_path=problem_image_path,
         consensus_meta=consensus_meta,
     )
-    _inject_ocr_hints(validated, solution_image_path)
+    _apply_highlight_mode_policy(validated, highlight_mode)
+    if highlight_mode == "ocr_box":
+        _inject_ocr_hints(validated, solution_image_path)
 
     try:
         save_analysis_result(analysis_id, validated, fallback_used=fallback_used, error_code=error_code)
     except Exception:
         mark_analysis_failed(analysis_id, "db_write_failed")
         raise
+
+
+def _apply_highlight_mode_policy(result: dict[str, Any], highlight_mode: str) -> None:
+    mistakes = result.get("mistakes")
+    if not isinstance(mistakes, list):
+        return
+
+    normalized_mode = str(highlight_mode or "tap").strip().lower()
+    if normalized_mode == "tap":
+        for item in mistakes:
+            if not isinstance(item, dict):
+                continue
+            highlight = item.get("highlight")
+            shape = "circle"
+            if isinstance(highlight, dict):
+                raw_shape = str(highlight.get("shape") or "circle").strip().lower()
+                if raw_shape in {"circle", "box"}:
+                    shape = raw_shape
+            item["highlight"] = {
+                "mode": "tap",
+                "shape": shape,
+                "x": None,
+                "y": None,
+                "w": None,
+                "h": None,
+            }
+        result["mistakes"] = mistakes
+        return
+
+    if normalized_mode != "ocr_box":
+        return
+
+    for item in mistakes:
+        if not isinstance(item, dict):
+            continue
+        highlight = item.get("highlight")
+        shape = "box"
+        normalized_highlight: dict[str, Any] = {
+            "mode": "ocr_box",
+            "shape": shape,
+            "x": None,
+            "y": None,
+            "w": None,
+            "h": None,
+        }
+        if isinstance(highlight, dict):
+            raw_shape = str(highlight.get("shape") or "box").strip().lower()
+            if raw_shape in {"circle", "box"}:
+                normalized_highlight["shape"] = raw_shape
+            for key in ("x", "y", "w", "h"):
+                value = _to_float(highlight.get(key))
+                if value is not None:
+                    normalized_highlight[key] = _normalize_highlight_value(key, value)
+        item["highlight"] = normalized_highlight
+
+    result["mistakes"] = mistakes
 
 
 def _get_llm_results(
@@ -559,8 +617,8 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
         for raw in changes[:6]:
             if not isinstance(raw, dict):
                 continue
-            change = _clean_text(raw.get("change"), "", 220)
-            rationale = _clean_text(raw.get("rationale"), "", 160)
+            change = _compact_feedback_text(_clean_text(raw.get("change"), "", 240), 120)
+            rationale = _compact_feedback_text(_clean_text(raw.get("rationale"), "", 200), 100)
             if not change:
                 continue
             if not rationale:
@@ -574,15 +632,19 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
         )
         normalized_changes.append(
             {
-                "change": _clean_text(seed, "중간 계산/기호를 다시 검토해 감점 포인트를 수정합니다.", 220),
-                "rationale": "핵심 오류를 먼저 보정하면 전체 점수 회복 효과가 큽니다.",
+                "change": _compact_feedback_text(
+                    _clean_text(seed, "중간 계산/기호를 다시 검토해 감점 포인트를 수정합니다.", 240),
+                    120,
+                ),
+                "rationale": "핵심 오류를 먼저 보정해 점수를 회복하세요.",
             }
         )
-    brief = _clean_text(
+    raw_brief = _clean_text(
         patch.get("patched_solution_brief"),
         "핵심 감점 포인트를 최소 수정해 기존 풀이 흐름을 유지합니다.",
         600,
     )
+    brief = _compact_feedback_text(raw_brief, 140)
     payload["patch"] = {
         "minimal_changes": normalized_changes,
         "patched_solution_brief": brief,
@@ -592,7 +654,7 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
     checklist_items: list[str] = []
     if isinstance(checklist, list):
         for raw in checklist:
-            text = _clean_text(raw, "", 80)
+            text = _compact_feedback_text(_clean_text(raw, "", 120), 72)
             if text and text not in checklist_items:
                 checklist_items.append(text)
             if len(checklist_items) >= 3:
@@ -605,7 +667,7 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
                 "조건 누락 여부를 체크한 뒤 답을 마무리하세요.",
             ]
             for item in candidates:
-                text = _clean_text(item, "", 80)
+                text = _compact_feedback_text(_clean_text(item, "", 120), 72)
                 if text and text not in checklist_items:
                     checklist_items.append(text)
                 if len(checklist_items) >= 3:
@@ -672,36 +734,62 @@ def _normalize_mistake(item: dict[str, Any]) -> dict[str, Any]:
     shape = str(highlight.get("shape") or "circle").strip()
     if shape not in {"circle", "box"}:
         shape = "circle"
-    normalized_highlight: dict[str, Any] = {"mode": mode, "shape": shape}
+    normalized_highlight: dict[str, Any] = {
+        "mode": mode,
+        "shape": shape,
+        "x": None,
+        "y": None,
+        "w": None,
+        "h": None,
+    }
     for key in ("x", "y", "w", "h"):
         value = _to_float(highlight.get(key))
         if value is not None:
             normalized_highlight[key] = _normalize_highlight_value(key, value)
 
     if mode in {"ocr_box", "region_box"} and not all(
-        key in normalized_highlight for key in ("x", "y", "w", "h")
+        normalized_highlight.get(key) is not None for key in ("x", "y", "w", "h")
     ):
         # Incomplete non-tap highlights are misleading; fall back to tap mode.
-        normalized_highlight = {"mode": "tap", "shape": shape}
+        normalized_highlight = {
+            "mode": "tap",
+            "shape": shape,
+            "x": None,
+            "y": None,
+            "w": None,
+            "h": None,
+        }
+
+    raw_evidence = _clean_text(item.get("evidence"), "근거가 부족해 보완 설명이 필요합니다.", 320)
+    raw_fix = _clean_text(
+        item.get("fix_instruction"),
+        "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
+        320,
+    )
+    raw_location = _clean_text(item.get("location_hint"), "풀이 중간 구간", 140)
+    mistake_type = _retarget_mistake_type(
+        mistake_type=mistake_type,
+        evidence=raw_evidence,
+        fix_instruction=raw_fix,
+        location_hint=raw_location,
+    )
 
     return {
         "type": mistake_type,
         "severity": severity,
         "points_deducted": points,
         "evidence": _normalize_evidence(
-            _clean_text(item.get("evidence"), "근거가 부족해 보완 설명이 필요합니다.", 240),
+            raw_evidence,
             mistake_type,
         ),
         "fix_instruction": _normalize_fix_instruction(
-            _clean_text(
-                item.get("fix_instruction"),
-                "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
-                240,
-            ),
+            raw_fix,
             mistake_type,
+            severity,
+            points,
         ),
         "location_hint": _normalize_location_hint(
-            _clean_text(item.get("location_hint"), "풀이 중간 구간", 120),
+            raw_location,
             mistake_type,
         ),
         "highlight": normalized_highlight,
@@ -714,6 +802,99 @@ def _clean_text(value: Any, default: str, max_len: int) -> str:
         if normalized:
             return normalized[:max_len]
     return default[:max_len]
+
+
+def _contains_math_expression(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(?:\d+\s*/\s*\d+|[\^=√]|\\frac|\\sqrt|[a-zA-Z]\s*[=]|[(){}\[\]])",
+            text,
+        )
+    )
+
+
+def _trim_unbalanced_suffix(text: str) -> str:
+    pairs = {")": "(", "]": "[", "}": "{"}
+    open_counts = {"(": 0, "[": 0, "{": 0}
+    filtered: list[str] = []
+    for ch in text:
+        if ch in open_counts:
+            open_counts[ch] += 1
+            filtered.append(ch)
+            continue
+        open_bracket = pairs.get(ch)
+        if open_bracket:
+            if open_counts[open_bracket] <= 0:
+                continue
+            open_counts[open_bracket] -= 1
+            filtered.append(ch)
+            continue
+        filtered.append(ch)
+
+    candidate = "".join(filtered).rstrip(" ,;:-")
+    for open_bracket, close_bracket in (("(", ")"), ("[", "]"), ("{", "}")):
+        while candidate.endswith(close_bracket) and candidate.count(open_bracket) < candidate.count(close_bracket):
+            candidate = candidate[:-1].rstrip(" ,;:-")
+    candidate = re.sub(r"\^(\d+\s*/\s*\d+)\)", r"^(\1)", candidate)
+    return candidate
+
+
+def _compact_feedback_text(text: str, max_len: int) -> str:
+    normalized = " ".join(text.split())
+    if not normalized:
+        return ""
+    has_math = _contains_math_expression(normalized)
+    effective_max_len = max_len
+    if has_math:
+        effective_max_len = max(max_len, 96)
+    first_clause = re.split(
+        r"(?:[.!?]| 그리고 | 또한 | 따라서 | 그러므로 | 이후 | 및 | with )",
+        normalized,
+        maxsplit=1,
+    )[0].strip()
+    candidate = first_clause if len(first_clause) >= 8 else normalized
+    if has_math and len(candidate) <= int(effective_max_len * 1.25):
+        return _trim_unbalanced_suffix(candidate)
+    if len(candidate) > effective_max_len:
+        shortened = candidate[:effective_max_len]
+        last_space = shortened.rfind(" ")
+        if last_space >= int(effective_max_len * 0.6):
+            shortened = shortened[:last_space]
+        candidate = shortened.rstrip(" ,;:-")
+    return _trim_unbalanced_suffix(candidate)
+
+
+def _retarget_mistake_type(
+    mistake_type: str,
+    evidence: str,
+    fix_instruction: str,
+    location_hint: str,
+) -> str:
+    valid_types = {member.value for member in MistakeType}
+    base_type = mistake_type if mistake_type in valid_types else MistakeType.logic_gap.value
+    combined = " ".join([evidence, fix_instruction, location_hint]).lower()
+
+    if any(token in combined for token in ("최종 답", "최종값", "대입", "검산")):
+        return MistakeType.final_form_error.value
+    if any(token in combined for token in ("단위", "cm", "mm", "kg", "m/s", "km/h", "°c")):
+        return MistakeType.unit_error.value
+    if any(token in combined for token in ("부호", "음수", "양수", "플러스", "마이너스")):
+        return MistakeType.sign_error.value
+    if any(token in combined for token in ("케이스", "경우 나눔", "경우의 수")):
+        return MistakeType.case_miss.value
+    if any(token in combined for token in ("그래프", "축", "기울기", "절편")):
+        return MistakeType.graph_misread.value
+    if any(token in combined for token in ("정의", "성질", "공식", "정리", "법칙", "이론", "개념", "지수법칙", "근호")):
+        if any(token in combined for token in ("조건 누락", "정의역", "범위", "제약", "가정", "누락")):
+            return MistakeType.condition_missed.value
+        return MistakeType.definition_confusion.value
+    if any(token in combined for token in ("전개", "약분", "동치", "식 변형", "분수지수", "거듭제곱")):
+        return MistakeType.algebra_error.value
+    if any(token in combined for token in ("계산", "산술", "곱셈", "나눗셈", "덧셈", "뺄셈")):
+        return MistakeType.arithmetic_error.value
+    if any(token in combined for token in ("논리", "비약", "연결")):
+        return MistakeType.logic_gap.value
+    return base_type
 
 
 def _clamp(value: float, min_value: float, max_value: float) -> float:
@@ -809,7 +990,18 @@ def _apply_simple_equation_consistency(
     if abs(expected - given) <= 0.05:
         _apply_correct_answer_adjustment(result, expected, given)
     else:
-        _apply_wrong_answer_adjustment(result, expected, given)
+        # OCR-only mismatch is noisy; avoid hard incorrect override without verified counterexample.
+        missing_info = result.get("missing_info")
+        if not isinstance(missing_info, list):
+            missing_info = []
+        hold_note = _clean_text(
+            "검산 힌트: OCR 단순식 비교가 불일치해 자동 오답 확정은 보류했습니다.",
+            "",
+            80,
+        )
+        if hold_note and hold_note not in missing_info:
+            missing_info.append(hold_note)
+        result["missing_info"] = missing_info[:6]
 
 
 def _solve_simple_x(problem_text: str) -> float | None:
@@ -1089,6 +1281,7 @@ def _apply_reasoning_guardrails(
     _apply_uncertainty_policy(result, report, consensus_meta)
     _apply_answer_verdict_policy(result, report)
     _ensure_mistake_coverage(result, report)
+    _apply_suggestion_penalty_policy(result)
     _reconcile_score_from_deductions(result)
 
 
@@ -1480,16 +1673,30 @@ def _inject_verification_findings(result: dict[str, Any], report: VerificationRe
     location_by_step = {step.step_id: step.text for step in report.steps}
     generated: list[dict[str, Any]] = []
     for finding in failed:
+        if finding.rule in {"RULE_FINAL_SUBSTITUTION", "RULE_EQUIV_TRANSFORM"} and not finding.counterexample:
+            continue
         if finding.rule == "RULE_FINAL_SUBSTITUTION":
             mistake_type = MistakeType.final_form_error.value
             severity = Severity.high.value
             points = 1.5
             fix = "최종 값을 원식에 대입해 성립 여부를 확인한 뒤 답을 수정하세요."
         else:
-            mistake_type = MistakeType.logic_gap.value
+            mistake_type = _retarget_mistake_type(
+                mistake_type=MistakeType.logic_gap.value,
+                evidence=finding.reason or "",
+                fix_instruction=finding.counterexample or "",
+                location_hint=location_by_step.get(finding.step_id) or "",
+            )
             severity = Severity.med.value
-            points = 0.5
-            fix = "전후 식의 해가 같아지는지 한 줄씩 다시 전개해 수정하세요."
+            points = 0.7 if mistake_type in {MistakeType.definition_confusion.value, MistakeType.algebra_error.value} else 0.5
+            fix_map = {
+                MistakeType.definition_confusion.value: "적용한 정의/법칙의 조건을 확인하고 해당 줄을 고치세요.",
+                MistakeType.algebra_error.value: "전개/약분 규칙을 기준으로 전후 식이 동치인지 다시 맞추세요.",
+                MistakeType.arithmetic_error.value: "해당 줄의 수치 계산을 다시 수행해 값 불일치를 제거하세요.",
+                MistakeType.sign_error.value: "이항/전개 부호를 다시 대조해 식 변형을 바로잡으세요.",
+                MistakeType.logic_gap.value: "전후 식의 해가 같아지는지 한 줄씩 다시 전개해 수정하세요.",
+            }
+            fix = fix_map.get(mistake_type, "전후 식의 해가 같아지는지 한 줄씩 다시 전개해 수정하세요.")
 
         evidence = _format_provenance_evidence(
             step_id=finding.step_id,
@@ -1760,7 +1967,7 @@ def _apply_verified_wrong_final_cap(result: dict[str, Any], report: Verification
     final_failures = [
         finding
         for finding in report.findings
-        if (not finding.passed) and finding.rule == "RULE_FINAL_SUBSTITUTION"
+        if (not finding.passed) and finding.rule == "RULE_FINAL_SUBSTITUTION" and bool(finding.counterexample)
     ]
     if not final_failures:
         return
@@ -1863,14 +2070,33 @@ def _apply_answer_verdict_policy(result: dict[str, Any], report: VerificationRep
     current_score = _to_float(result.get("score_total")) or 0.0
     existing_verdict = _normalize_answer_verdict(result.get("answer_verdict"))
     used_existing_signal = False
-    if verdict == AnswerVerdict.unknown.value and existing_verdict in {
-        AnswerVerdict.correct.value,
-        AnswerVerdict.incorrect.value,
-    }:
+    inferred_reason: str | None = None
+    has_verified_incorrect_signal = _has_verified_incorrect_signal(report)
+    if (
+        verdict == AnswerVerdict.unknown.value
+        and existing_verdict == AnswerVerdict.correct.value
+        and not has_verified_incorrect_signal
+    ):
+        verdict = existing_verdict
+        used_existing_signal = True
+    elif (
+        verdict == AnswerVerdict.unknown.value
+        and existing_verdict == AnswerVerdict.incorrect.value
+        and has_verified_incorrect_signal
+    ):
         verdict = existing_verdict
         used_existing_signal = True
 
-    reason = _stable_verdict_reason(verdict, report, used_existing_signal=used_existing_signal)
+    if verdict == AnswerVerdict.unknown.value:
+        inferred = _infer_unknown_verdict_from_deductions(result)
+        if inferred is not None:
+            verdict, inferred_reason = inferred
+
+    reason = inferred_reason or _stable_verdict_reason(
+        verdict,
+        report,
+        used_existing_signal=used_existing_signal,
+    )
 
     result["answer_verdict"] = verdict
     result["answer_verdict_reason"] = _clean_text(reason, "정오 판단 정보가 부족합니다.", 120)
@@ -1878,9 +2104,11 @@ def _apply_answer_verdict_policy(result: dict[str, Any], report: VerificationRep
     logic_quality = _estimate_logic_quality(result, report)
 
     if verdict == AnswerVerdict.correct.value:
-        target_score = round(_clamp(7.0 + logic_quality * 3.0, 7.0, 10.0), 2)
+        # Correct answers should stay in a high-score band; style improvements
+        # should deduct less than objectively incorrect work.
+        target_score = round(_clamp(8.2 + logic_quality * 1.8, 8.2, 10.0), 2)
         # Keep existing higher score only if still inside the correct-answer band.
-        if 7.0 <= current_score <= 10.0 and current_score > target_score:
+        if 8.2 <= current_score <= 10.0 and current_score > target_score:
             target_score = current_score
     elif verdict == AnswerVerdict.incorrect.value:
         target_score = round(_clamp(logic_quality * 7.0, 0.0, 7.0), 2)
@@ -1892,6 +2120,54 @@ def _apply_answer_verdict_policy(result: dict[str, Any], report: VerificationRep
 
     result["score_total"] = target_score
     _rescale_rubric_to_score(result, target_score, verdict)
+
+
+def _infer_unknown_verdict_from_deductions(result: dict[str, Any]) -> tuple[str, str] | None:
+    mistakes = result.get("mistakes")
+    if not isinstance(mistakes, list):
+        return None
+
+    total_deduction = 0.0
+    severe_count = 0
+    for item in mistakes:
+        if not isinstance(item, dict):
+            continue
+        points = _to_float(item.get("points_deducted")) or 0.0
+        if points <= 0.04:
+            continue
+        total_deduction += points
+        if points >= 1.0:
+            severe_count += 1
+
+    score_total = _round_to_tenth(_clamp(_to_float(result.get("score_total")) or 0.0, 0.0, 10.0))
+
+    if total_deduction >= 1.2 or severe_count >= 1:
+        return (
+            AnswerVerdict.incorrect.value,
+            "틀림: 감점 근거가 누적되어 오답 가능성이 높습니다.",
+        )
+
+    if total_deduction > 0.04:
+        if total_deduction <= 0.8 and severe_count == 0 and score_total >= 8.0:
+            return (
+                AnswerVerdict.correct.value,
+                "맞음: 정답은 유지되며 보완형 감점만 반영했습니다.",
+            )
+        return (
+            AnswerVerdict.incorrect.value,
+            "틀림: 감점 포인트가 확인되어 오답으로 판단했습니다.",
+        )
+
+    if score_total >= 7.0:
+        return (
+            AnswerVerdict.correct.value,
+            "맞음: 감점 근거가 없어 정답으로 판단했습니다.",
+        )
+
+    return (
+        AnswerVerdict.incorrect.value,
+        "틀림: 점수 기준에서 오답 가능성이 높습니다.",
+    )
 
 
 def _derive_answer_verdict(report: VerificationReport) -> tuple[str, str]:
@@ -1966,6 +2242,15 @@ def _stable_verdict_reason(
     return "정오 판단 보류: 검증 정보 부족"
 
 
+def _has_verified_incorrect_signal(report: VerificationReport) -> bool:
+    return any(
+        (not item.passed)
+        and item.rule in {"RULE_FINAL_SUBSTITUTION", "RULE_EQUIV_TRANSFORM"}
+        and bool(item.counterexample)
+        for item in report.findings
+    )
+
+
 def _estimate_logic_quality(result: dict[str, Any], report: VerificationReport) -> float:
     rubric = result.get("rubric_scores")
     rubric_quality = 0.5
@@ -2015,22 +2300,41 @@ def _ensure_mistake_coverage(result: dict[str, Any], report: VerificationReport)
     mistakes = [dict(item) for item in mistakes_raw if isinstance(item, dict)] if isinstance(mistakes_raw, list) else []
     # Drop display-only zero deductions; actual deduction factors must be positive.
     mistakes = [item for item in mistakes if (_to_float(item.get("points_deducted")) or 0.0) > 0.04]
-    verdict = _normalize_answer_verdict(result.get("answer_verdict"))
-    has_failed_finding = any(not finding.passed for finding in report.findings)
+    has_verified_failed_finding = _has_verified_incorrect_signal(report)
 
-    # Verified-correct paths should not receive synthetic deduction cards generated
-    # only to fit score narratives.
-    if verdict == AnswerVerdict.correct.value and not has_failed_finding:
+    # Without a verified failed counterexample, keep only existing deductions and avoid
+    # synthetic gap-filling cards that often over-label correct regions.
+    if not has_verified_failed_finding:
+        score_total = _round_to_tenth(_clamp(_to_float(result.get("score_total")) or 0.0, 0.0, 10.0))
+        target_deduction = _round_to_tenth(10.0 - score_total)
+        if target_deduction > 0.04 and not mistakes:
+            step_id = _infer_step_id("풀이 중간 구간", report.steps) or "s1"
+            mistakes.append(
+                {
+                    "type": MistakeType.logic_gap.value,
+                    "severity": Severity.low.value if target_deduction < 0.8 else Severity.med.value,
+                    "points_deducted": round(_clamp(target_deduction, 0.1, 2.0), 2),
+                    "evidence": _format_provenance_evidence(
+                        step_id=step_id,
+                        rule="RULE_SCORE_INFERRED",
+                        reason="루브릭 감점이 반영되어 개선 포인트를 표시합니다.",
+                    ),
+                    "fix_instruction": "더 나은 풀이 제안: 핵심 계산 근거를 한 줄씩 명시하세요.",
+                    "location_hint": "풀이 중간 구간",
+                    "highlight": {"mode": "ocr_box", "shape": "box"},
+                }
+            )
+
+        if mistakes and target_deduction > 0.04:
+            mistakes = _normalize_deductions_to_target(mistakes, target_deduction)
+
         mistakes.sort(key=lambda item: _to_float(item.get("points_deducted")) or 0.0, reverse=True)
         result["mistakes"] = mistakes[:20]
         if mistakes:
             total_deduction = _round_to_tenth(
                 sum((_to_float(item.get("points_deducted")) or 0.0) for item in result["mistakes"])
             )
-            score_ceiling = _round_to_tenth(_clamp(10.0 - total_deduction, 0.0, 10.0))
-            current_score = _round_to_tenth(_to_float(result.get("score_total")) or 0.0)
-            if current_score > score_ceiling:
-                result["score_total"] = score_ceiling
+            result["score_total"] = _round_to_tenth(_clamp(10.0 - total_deduction, 0.0, 10.0))
         return
 
     score_total = _round_to_tenth(_clamp(_to_float(result.get("score_total")) or 0.0, 0.0, 10.0))
@@ -2075,6 +2379,57 @@ def _ensure_mistake_coverage(result: dict[str, Any], report: VerificationReport)
         sum((_to_float(item.get("points_deducted")) or 0.0) for item in result["mistakes"])
     )
     result["score_total"] = _round_to_tenth(10.0 - total_deduction)
+
+
+def _is_better_solution_suggestion(mistake: dict[str, Any]) -> bool:
+    instruction = _clean_text(mistake.get("fix_instruction"), "", 180)
+    if instruction.startswith("더 나은 풀이 제안"):
+        return True
+    severity = _normalize_severity(mistake.get("severity"))
+    points = _to_float(mistake.get("points_deducted")) or 0.0
+    return severity == Severity.low.value and points <= 0.6
+
+
+def _apply_suggestion_penalty_policy(result: dict[str, Any]) -> None:
+    if _normalize_answer_verdict(result.get("answer_verdict")) != AnswerVerdict.correct.value:
+        return
+
+    mistakes_raw = result.get("mistakes")
+    if not isinstance(mistakes_raw, list) or not mistakes_raw:
+        return
+
+    mistakes = [dict(item) for item in mistakes_raw if isinstance(item, dict)]
+    if not mistakes:
+        return
+
+    suggestion_flags = [_is_better_solution_suggestion(item) for item in mistakes]
+    adjusted = False
+    for idx, item in enumerate(mistakes):
+        if not suggestion_flags[idx]:
+            continue
+        points = _to_float(item.get("points_deducted")) or 0.0
+        capped = round(_clamp(points, 0.1, 0.5), 2)
+        if abs(capped - points) > 1e-9:
+            adjusted = True
+        item["points_deducted"] = capped
+        item["severity"] = Severity.low.value
+
+    if all(suggestion_flags):
+        total = round(sum((_to_float(item.get("points_deducted")) or 0.0) for item in mistakes), 2)
+        if total > 1.4:
+            mistakes = _normalize_deductions_to_target(mistakes, 1.4)
+            adjusted = True
+
+    if not adjusted:
+        return
+
+    result["mistakes"] = _sort_mistakes(mistakes)
+    total_deduction = _round_to_tenth(
+        sum((_to_float(item.get("points_deducted")) or 0.0) for item in result["mistakes"])
+    )
+    score_floor = _round_to_tenth(_clamp(10.0 - total_deduction, 0.0, 10.0))
+    current_score = _round_to_tenth(_clamp(_to_float(result.get("score_total")) or 0.0, 0.0, 10.0))
+    result["score_total"] = max(current_score, score_floor)
 
 
 def _build_rubric_gap_mistakes(
@@ -2468,16 +2823,27 @@ def _inject_ocr_hints(result: dict[str, Any], image_path: str) -> None:
 
     fallback_index = 0
     for idx, mistake in enumerate(result.get("mistakes", [])):
+        if not isinstance(mistake, dict):
+            continue
+
+        highlight = dict(mistake.get("highlight") or {})
+        mode = str(highlight.get("mode") or "tap")
+        if mode != "ocr_box":
+            continue
+
         step_id, _, _ = _parse_provenance(mistake.get("evidence"))
         hint_index = _step_id_to_hint_index(step_id, len(boxes))
         if hint_index is None:
             hint_index = min(fallback_index, len(boxes) - 1)
             fallback_index += 1
         hint = boxes[hint_index]
-        highlight = dict(mistake.get("highlight") or {})
-        if not all(highlight.get(key) is not None for key in ("x", "y", "w", "h")):
-            highlight.update(hint)
-            mistake["highlight"] = highlight
+        # In OCR mode, prioritize deterministic OCR boxes over model-proposed coordinates.
+        highlight.update(hint)
+        highlight["mode"] = "ocr_box"
+        shape = str(highlight.get("shape") or "box").strip().lower()
+        if shape not in {"circle", "box"}:
+            highlight["shape"] = "box"
+        mistake["highlight"] = highlight
 
 
 def _step_id_to_hint_index(step_id: str | None, box_count: int) -> int | None:
@@ -2598,7 +2964,7 @@ def _normalize_points_by_severity(points: float, severity: str) -> float:
     if severity == Severity.med.value:
         return max(points, 0.4)
     # low
-    return min(points, 0.8)
+    return min(points, 0.6)
 
 
 def _normalize_highlight_value(key: str, value: float) -> float:
@@ -2660,42 +3026,63 @@ def _build_checklist_from_mistakes(mistakes: list[dict[str, Any]]) -> list[str]:
     )
     checklist: list[str] = []
     for item in ranked:
-        instruction = _clean_text(item.get("fix_instruction"), "", 80)
+        instruction = _compact_feedback_text(_clean_text(item.get("fix_instruction"), "", 140), 72)
         if instruction and instruction not in checklist:
             checklist.append(instruction)
         if len(checklist) >= 3:
             break
     if not checklist and mistakes:
-        fallback = _clean_text(mistakes[0].get("fix_instruction"), "최종 답 검산 수행", 80)
+        fallback = _compact_feedback_text(
+            _clean_text(mistakes[0].get("fix_instruction"), "최종 답 검산 수행", 140),
+            72,
+        )
         if fallback:
             checklist.append(fallback)
     return checklist[:3]
 
 
-def _normalize_fix_instruction(text: str, mistake_type: str) -> str:
+def _normalize_fix_instruction(text: str, mistake_type: str, severity: str, points: float) -> str:
     normalized = text.strip()
-    if len(normalized) >= 12 and normalized not in {
+    if 12 <= len(normalized) <= 120 and normalized not in {
         "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
         "수정 필요",
         "다시 풀기",
     }:
-        return normalized
+        concise = _compact_feedback_text(normalized, 120)
+    else:
+        template_map = {
+            MistakeType.sign_error.value: "이항과 전개 단계의 부호를 한 줄씩 다시 대조하세요.",
+            MistakeType.unit_error.value: "최종 줄과 중간 계산의 단위를 동일 기준으로 정리하세요.",
+            MistakeType.condition_missed.value: "문제 조건을 식 옆에 적고 누락 없이 반영하세요.",
+            MistakeType.algebra_error.value: "거듭제곱/약분 근거를 한 줄씩 명시해 계산하세요.",
+            MistakeType.definition_confusion.value: "사용한 정의/법칙의 적용 조건을 먼저 확인하고 식에 반영하세요.",
+            MistakeType.final_form_error.value: "최종 답을 원식에 다시 대입해 성립 여부를 확인하세요.",
+            MistakeType.logic_gap.value: "단계 간 연결 근거를 한 줄씩 보강하고 점프를 줄이세요.",
+        }
+        concise = _compact_feedback_text(
+            template_map.get(mistake_type, "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요."),
+            120,
+        )
 
-    template_map = {
-        MistakeType.sign_error.value: "이항과 전개 단계의 부호를 한 줄씩 다시 대조하세요.",
-        MistakeType.unit_error.value: "최종 줄과 중간 계산의 단위를 동일 기준으로 정리하세요.",
-        MistakeType.condition_missed.value: "문제 조건을 식 옆에 적고 누락 없이 반영하세요.",
-        MistakeType.algebra_error.value: "식 전개와 약분을 단계별로 나눠 재계산하세요.",
-        MistakeType.final_form_error.value: "최종 답을 원식에 다시 대입해 성립 여부를 확인하세요.",
-        MistakeType.logic_gap.value: "단계 간 연결 근거를 한 줄씩 보강하고 점프를 줄이세요.",
-    }
-    return template_map.get(mistake_type, "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.")
+    suggestion_target = (
+        _normalize_severity(severity) == Severity.low.value
+        or points <= 0.6
+        or (
+            mistake_type in {MistakeType.logic_gap.value, MistakeType.algebra_error.value}
+            and points <= 0.8
+        )
+    )
+    if suggestion_target:
+        if concise.startswith("더 나은 풀이 제안"):
+            return _compact_feedback_text(concise, 140)
+        return _compact_feedback_text(f"더 나은 풀이 제안: {concise}", 140)
+    return concise
 
 
 def _normalize_location_hint(text: str, mistake_type: str) -> str:
     normalized = text.strip()
     if normalized and normalized not in {"풀이 중간 구간", "해당 부분"}:
-        return normalized
+        return _compact_feedback_text(normalized, 30)
 
     template_map = {
         MistakeType.final_form_error.value: "최종 답 줄",
@@ -2703,7 +3090,7 @@ def _normalize_location_hint(text: str, mistake_type: str) -> str:
         MistakeType.sign_error.value: "이항/부호 처리 줄",
         MistakeType.condition_missed.value: "초기 조건 정리 줄",
     }
-    return template_map.get(mistake_type, "풀이 중간 구간")
+    return _compact_feedback_text(template_map.get(mistake_type, "풀이 중간 구간"), 30)
 
 
 def _normalize_evidence(text: str, mistake_type: str) -> str:

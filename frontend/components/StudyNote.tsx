@@ -1,6 +1,7 @@
 import React from "react";
 import type { AnalysisResult, Mistake, PatchChange } from "@/lib/types";
 import { formatMistakeType } from "@/lib/mistakeTypeLabels";
+import { MathText } from "@/components/MathText";
 import styles from "./StudyNote.module.css";
 
 interface StudyNoteProps {
@@ -37,7 +38,8 @@ export function StudyNote({ result }: StudyNoteProps) {
         </div>
       </header>
       <p className={styles.emptyState}>
-        {answer_verdict === "correct" ? "정답" : answer_verdict === "incorrect" ? "오답" : "판정보류"} · {answer_verdict_reason}
+        {answer_verdict === "correct" ? "정답" : answer_verdict === "incorrect" ? "오답" : "판정보류"} ·{" "}
+        <MathText text={answer_verdict_reason} />
       </p>
 
       {/* Rubric Breakdown */}
@@ -67,7 +69,7 @@ export function StudyNote({ result }: StudyNoteProps) {
           <p className={styles.emptyState}>실수가 발견되지 않았어요. 잘했어요!</p>
         ) : (
           <div className={styles.mistakeList}>
-            {mistakes.map((mistake, index) => (
+            {mistakes.map((mistake) => (
               <MistakeCard 
                 key={
                   mistake.mistake_id ??
@@ -87,14 +89,16 @@ export function StudyNote({ result }: StudyNoteProps) {
         </div>
         <div className={styles.patchContainer}>
           {patch?.patched_solution_brief ? (
-             <p className={styles.patchBrief}>&ldquo;{patch.patched_solution_brief}&rdquo;</p>
+             <p className={styles.patchBrief}>
+               &ldquo;<MathText text={patch.patched_solution_brief} />&rdquo;
+             </p>
           ) : (
              <p className={styles.emptyState}>패치 요약이 없습니다.</p>
           )}
 
           {patch?.minimal_changes?.length > 0 ? (
             <div className={styles.changeList}>
-              {patch.minimal_changes.map((change, index) => (
+              {patch.minimal_changes.map((change) => (
                 <PatchChangeItem key={`${change.change}-${change.rationale}`} change={change} />
               ))}
             </div>
@@ -113,10 +117,12 @@ export function StudyNote({ result }: StudyNoteProps) {
           <p className={styles.emptyState}>체크리스트가 없습니다.</p>
         ) : (
           <ul className={styles.checklist}>
-            {next_checklist.map((item, index) => (
+            {next_checklist.map((item) => (
               <li key={item} className={styles.checklistItem}>
                 <div className={styles.checkbox} />
-                <span>{item}</span>
+                <span>
+                  <MathText text={item} />
+                </span>
               </li>
             ))}
           </ul>
@@ -156,16 +162,22 @@ function MistakeCard({ mistake }: { mistake: Mistake }) {
           <span className={styles.mistakeDeduction}>{deductionLabel}</span>
         </div>
       <div className={styles.mistakeDetails}>
-        <div><strong>수정:</strong> {mistake.fix_instruction}</div>
+        <div>
+          <strong>수정:</strong> <MathText text={mistake.fix_instruction} />
+        </div>
         
         <div className={styles.mistakeDetailRow}>
            <span className={styles.detailLabel}>근거:</span>
-           <span>{mistake.evidence}</span>
+           <span>
+             <MathText text={mistake.evidence} />
+           </span>
         </div>
         {mistake.location_hint && (
            <div className={styles.mistakeDetailRow}>
               <span className={styles.detailLabel}>위치:</span>
-              <span>{mistake.location_hint}</span>
+              <span>
+                <MathText text={mistake.location_hint} />
+              </span>
            </div>
         )}
       </div>
@@ -176,8 +188,12 @@ function MistakeCard({ mistake }: { mistake: Mistake }) {
 function PatchChangeItem({ change }: { change: PatchChange }) {
   return (
     <div className={styles.changeItem}>
-      <div className={styles.changeText}>{change.change}</div>
-      <div className={styles.changeRationale}>{change.rationale}</div>
+      <div className={styles.changeText}>
+        <MathText text={change.change} />
+      </div>
+      <div className={styles.changeRationale}>
+        <MathText text={change.rationale} />
+      </div>
     </div>
   );
 }

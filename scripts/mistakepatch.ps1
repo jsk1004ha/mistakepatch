@@ -166,6 +166,15 @@ try {
     }
     else {
         Write-Host "Starting Frontend (Development)..."
+        try {
+            $NextPath = Join-Path $FrontendDir ".next"
+            if (Test-Path $NextPath) {
+                Remove-Item -Path $NextPath -Recurse -Force -ErrorAction SilentlyContinue
+                Write-Host "frontend/.next cleaned (dev start)."
+            }
+        } catch {
+            # best-effort
+        }
         $FrontendOut = Join-Path $EvidenceDir "frontend.out.log"
         $FrontendErr = Join-Path $EvidenceDir "frontend.err.log"
         $FrontendProc = Start-Process -FilePath "cmd.exe" -ArgumentList "/c npm run dev" -WorkingDirectory $FrontendDir -PassThru -NoNewWindow -RedirectStandardOutput $FrontendOut -RedirectStandardError $FrontendErr

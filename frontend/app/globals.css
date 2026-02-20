@@ -28,6 +28,19 @@ p {
   margin: 0;
 }
 
+.mathText {
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
+}
+
+.mathText sup,
+.mathText sub {
+  font-size: 0.78em;
+  line-height: 0;
+}
+
 .noteShell {
   max-width: 1400px;
   margin: 0 auto;

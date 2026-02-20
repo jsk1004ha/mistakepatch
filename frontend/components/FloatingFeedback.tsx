@@ -1,9 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 
 import type { AnalysisDetail, AnalyzeStatus, AnswerVerdict, Mistake } from "@/lib/types";
 import { formatMistakeType } from "@/lib/mistakeTypeLabels";
+import { MathText } from "@/components/MathText";
 
 type FeedbackTab = "mistakes" | "patch" | "checklist";
 
@@ -34,6 +35,12 @@ function formatVerdictLabel(verdict: AnswerVerdict): string {
   return "판정보류";
 }
 
+function formatDeduction(points: number): string {
+  if (!Number.isFinite(points)) return "-?점";
+  if (points <= 0.04) return "보류";
+  return `-${points.toFixed(1)}점`;
+}
+
 export function FloatingFeedback({
   analysis,
   isSubmitting,
@@ -44,13 +51,37 @@ export function FloatingFeedback({
 }: FloatingFeedbackProps) {
   const [collapsed, setCollapsed] = useState(false);
   const result = analysis?.result ?? null;
+  const patchChanges = result?.patch?.minimal_changes ?? [];
   const mistakes = result?.mistakes ?? [];
-  const selectedMistake = mistakes[selectedIndex];
-  const totalDeduction = mistakes.reduce((sum, mistake) => {
+  const displayMistakes = useMemo(() => {
+    if (!result) return mistakes;
+    if (mistakes.length > 0) return mistakes;
+
+    const inferredPoints = Math.round(Math.max(0, 10 - result.score_total) * 10) / 10;
+    if (inferredPoints <= 0.04) return mistakes;
+
+    const firstPatch = patchChanges[0];
+    const inferred: Mistake = {
+      type: "LOGIC_GAP",
+      severity: inferredPoints >= 1.0 ? "med" : "low",
+      points_deducted: inferredPoints,
+      evidence: result.answer_verdict_reason || "총점 기준 감점이 반영되었습니다.",
+      fix_instruction:
+        firstPatch?.change || "더 나은 풀이 제안: 패치 탭의 최소 수정안을 확인해 근거를 보강하세요.",
+      location_hint: "풀이 중간 구간",
+      highlight: { mode: "ocr_box", shape: "box" },
+    };
+    return [inferred];
+  }, [mistakes, patchChanges, result]);
+
+  const activeIndex = selectedIndex >= 0 && selectedIndex < displayMistakes.length ? selectedIndex : 0;
+  const selectedMistake = displayMistakes[activeIndex];
+  const totalDeduction = displayMistakes.reduce((sum, mistake) => {
     const points = Number.isFinite(mistake.points_deducted) ? mistake.points_deducted : 0;
     return sum + points;
   }, 0);
-  const hasAutoDeduction = totalDeduction > 0.04;
+  const scoreDeduction = result ? Math.max(0, 10 - result.score_total) : 0;
+  const hasAutoDeduction = totalDeduction > 0.04 || scoreDeduction > 0.04;
   const isLikelyCorrect = Boolean(result && result.answer_verdict === "correct");
   const showNoIssueMessage = isLikelyCorrect && !hasAutoDeduction;
 
@@ -76,7 +107,21 @@ export function FloatingFeedback({
       {!collapsed && (
         <div className="floatingBody">
           {!analysis && <p>필기를 작성한 뒤 &quot;채점 실행&quot;을 누르면 피드백이 여기에 표시됩니다.</p>}
-          {analysis && !result && <p>분석 중입니다. 잠시만 기다려 주세요.</p>}
+          {analysis && !result && (analysis.status === "queued" || analysis.status === "processing") && (
+            <p>분석 중입니다. 잠시만 기다려 주세요.</p>
+          )}
+          {analysis && !result && analysis.status === "done" && (
+            <p className="warningText">
+              분석은 완료되었지만 결과를 읽지 못했습니다.
+              {analysis.error_code ? ` (${analysis.error_code})` : ""}
+            </p>
+          )}
+          {analysis && !result && analysis.status === "failed" && (
+            <p className="warningText">
+              분석에 실패했습니다.
+              {analysis.error_code ? ` (${analysis.error_code})` : ""}
+            </p>
+          )}
 
           {result && (
             <>
@@ -90,7 +135,7 @@ export function FloatingFeedback({
                 <span>{formatVerdictLabel(result.answer_verdict)}</span>
               </div>
               <p className="verdictReason" data-testid="verdict-reason">
-                {result.answer_verdict_reason}
+                <MathText text={result.answer_verdict_reason} />
               </p>
               {showNoIssueMessage && (
                 <p className="okText">문제 없음: 정답이며 자동 감점 포인트가 없습니다.</p>
@@ -132,22 +177,41 @@ export function FloatingFeedback({
 
               {activeTab === "mistakes" && (
                 <div className="cardList compact">
-                  {mistakes.length === 0 && (
-                    <p className="hintText">감점 포인트를 찾지 못했습니다.</p>
+                  {displayMistakes.length === 0 && (
+                    <>
+                      <p className="hintText">감점 포인트를 찾지 못했습니다.</p>
+                      {patchChanges.length > 0 && (
+                        <button
+                          type="button"
+                          className="ghostBtn"
+                          onClick={() => onTabChange("patch")}
+                          data-testid="empty-mistakes-go-patch"
+                        >
+                          패치 탭으로 이동
+                        </button>
+                      )}
+                    </>
                   )}
-                  {mistakes.map((mistake, index) => (
+                  {displayMistakes.map((mistake, index) => (
                     <button
                       type="button"
                       key={mistake.mistake_id ?? `${mistake.type}-${index}`}
-                      className={`mistakeCard ${index === selectedIndex ? "active" : ""}`}
+                      className={`mistakeCard ${index === activeIndex ? "active" : ""}`}
                       onClick={() => onSelectIndex(index)}
                       data-testid={`mistake-card-${index}`}
                     >
                       <div className="cardTop">
                         <strong title={mistake.type}>{formatMistakeType(mistake.type)}</strong>
-                        <span>-{mistake.points_deducted.toFixed(1)}점</span>
+                        <span>{formatDeduction(mistake.points_deducted)}</span>
                       </div>
-                      <p>{mistake.fix_instruction}</p>
+                      <p>
+                        <MathText text={mistake.fix_instruction} />
+                      </p>
+                      {mistake.evidence && (
+                        <p className="hintText">
+                          <MathText text={mistake.evidence} />
+                        </p>
+                      )}
                     </button>
                   ))}
                   {needsTap(selectedMistake) && (
@@ -158,10 +222,14 @@ export function FloatingFeedback({
 
               {activeTab === "patch" && (
                 <div className="patchBox">
-                  {result.patch.minimal_changes.map((change, index) => (
+                  {patchChanges.map((change, index) => (
                     <div key={`${index}-${change.change}`} className="patchItem">
-                      <strong>{change.change}</strong>
-                      <p>{change.rationale}</p>
+                      <strong>
+                        <MathText text={change.change} />
+                      </strong>
+                      <p>
+                        <MathText text={change.rationale} />
+                      </p>
                     </div>
                   ))}
                 </div>
@@ -170,7 +238,9 @@ export function FloatingFeedback({
               {activeTab === "checklist" && (
                 <ol className="checklist">
                   {result.next_checklist.map((item) => (
-                    <li key={item}>{item}</li>
+                    <li key={item}>
+                      <MathText text={item} />
+                    </li>
                   ))}
                 </ol>
               )}
