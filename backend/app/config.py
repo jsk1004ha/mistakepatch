@@ -75,7 +75,7 @@ class Settings:
         max_upload_mb = int(os.getenv("MISTAKEPATCH_MAX_UPLOAD_MB", "10"))
         allowed_origins_env = os.getenv(
             "MISTAKEPATCH_ALLOWED_ORIGINS",
-            "http://localhost:3000,http://127.0.0.1:3000",
+            "http://localhost:3000,http://127.0.0.1:3000,https://mistakepatch-vercel.vercel.app",
         )
         allowed_origins = [item.strip() for item in allowed_origins_env.split(",") if item.strip()]
 
