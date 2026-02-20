@@ -79,6 +79,17 @@ class OpenAIService:
             raise RuntimeError("Failed to parse model response.")
         return payload
 
+    @staticmethod
+    def _build_user_text(subject: str, highlight_mode: str) -> str:
+        return (
+            f"subject={subject}\n"
+            f"highlight_mode={highlight_mode}\n"
+            "Grade the student solution with the provided rubric.\n"
+            "Return Korean feedback for deductions, minimal patch, and checklist.\n"
+            "Do not output full tutoring unless required for minimal correction.\n"
+            "Use concise evidence-based mistakes and conservative confidence."
+        )
+
     def _request(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         if self._supports_responses_api:
             response = self._client.responses.create(
@@ -202,11 +213,7 @@ class OpenAIService:
         subject: str,
         highlight_mode: str,
     ) -> list[dict[str, Any]]:
-        user_text = (
-            f"subject={subject}\n"
-            f"highlight_mode={highlight_mode}\n"
-            "Score with rubric and return mistakes, patch, checklist in Korean."
-        )
+        user_text = self._build_user_text(subject=subject, highlight_mode=highlight_mode)
         content: list[dict[str, Any]] = [
             {"type": "input_text", "text": user_text},
             self._responses_image_content(solution_image_path),
@@ -226,11 +233,7 @@ class OpenAIService:
         subject: str,
         highlight_mode: str,
     ) -> list[dict[str, Any]]:
-        user_text = (
-            f"subject={subject}\n"
-            f"highlight_mode={highlight_mode}\n"
-            "Score with rubric and return mistakes, patch, checklist in Korean."
-        )
+        user_text = self._build_user_text(subject=subject, highlight_mode=highlight_mode)
         content: list[dict[str, Any]] = [
             {"type": "text", "text": user_text},
             self._chat_image_content(solution_image_path),

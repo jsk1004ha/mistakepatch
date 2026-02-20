@@ -15,6 +15,7 @@ import { loadState, saveState, SYSTEM_NOTEBOOK_IDS } from "@/lib/notebooks/stora
 import type { Note, NotebooksState } from "@/lib/notebooks/types";
 import type { AnalysisDetail, Subject } from "@/lib/types";
 import { createNoteId, buildNoteTags, loadAutosavedAnalysisIds, saveAutosavedAnalysisIds } from "@/lib/home/pageUtils";
+import { formatMistakeTag, formatMistakeType } from "@/lib/mistakeTypeLabels";
 
 const AUTOSAVE_TOAST_DURATION_MS = 9000;
 
@@ -22,6 +23,7 @@ type FeedbackTab = "mistakes" | "patch" | "checklist";
 
 export default function HomePage() {
   const canvasRef = useRef<NoteCanvasHandle | null>(null);
+  const problemImageInputRef = useRef<HTMLInputElement | null>(null);
 
   const [subject, setSubject] = useState<Subject>("math");
   const [highlightMode, setHighlightMode] = useState<"tap" | "ocr_box">("tap");
@@ -124,7 +126,7 @@ export default function HomePage() {
       saveAutosavedAnalysisIds(dedupeIds);
       setNotebooksState(nextState);
       setAutosaveToast({ noteId: createdNote.id, analysisId: detail.analysis_id });
-      setInfo("분석 완료 노트를 Inbox에 자동 저장했습니다.");
+      setInfo("분석 완료 노트를 수신함에 자동 저장했습니다.");
     } catch (err) {
       if (err instanceof Error && err.message === "STORAGE_WRITE_FAILURE") {
         setInfo("노트 자동 저장에 실패했습니다. 브라우저 저장 공간을 확인해 주세요.");
@@ -149,6 +151,7 @@ export default function HomePage() {
     runAnalysis,
     handleSelectHistory,
     handleAnnotationTap,
+    clearCurrentAnalysis,
   } = useAnalysisFlow({
     subject,
     highlightMode,
@@ -161,6 +164,19 @@ export default function HomePage() {
     setInfo,
     persistAutoSavedNote,
   });
+
+  const handleClearAll = useCallback(() => {
+    canvasRef.current?.clear();
+    setProblemImage(null);
+    if (problemImageInputRef.current) {
+      problemImageInputRef.current.value = "";
+    }
+    clearCurrentAnalysis();
+    setSelectedIndex(0);
+    setActiveTab("mistakes");
+    setError(null);
+    setInfo("필기, 문제 이미지, 현재 분석 결과를 초기화했습니다.");
+  }, [clearCurrentAnalysis]);
 
   const filteredNotes = useMemo(() => {
     if (!notebooksState || !selectedNotebookId) return [];
@@ -221,7 +237,7 @@ export default function HomePage() {
             onClick={() => setIsNotebooksOpen(true)}
             data-testid="notebooks-toggle"
           >
-            Notebooks
+            노트북
           </button>
 
           <label>
@@ -244,12 +260,13 @@ export default function HomePage() {
           </label>
 
           <span className="healthIndicator">
-            OCR hints: {healthError ? "?" : backendHealth?.enable_ocr_hints ? "On" : "Off"}
+            OCR 힌트: {healthError ? "?" : backendHealth?.enable_ocr_hints ? "켜짐" : "꺼짐"}
           </span>
 
           <label>
             문제 이미지
             <input
+              ref={problemImageInputRef}
               type="file"
               accept="image/png,image/jpeg,image/webp"
               onChange={(event) => setProblemImage(event.target.files?.[0] ?? null)}
@@ -292,7 +309,7 @@ export default function HomePage() {
           <button type="button" className="ghostBtn" onClick={() => canvasRef.current?.redo()}>
             앞으로
           </button>
-          <button type="button" className="ghostBtn" onClick={() => canvasRef.current?.clear()}>
+          <button type="button" className="ghostBtn" onClick={handleClearAll}>
             전체 지우기
           </button>
           <button
@@ -349,10 +366,10 @@ export default function HomePage() {
         {/* Top Tags Dashboard */}
         {dashboardTopTags && dashboardTopTags.length > 0 && (
           <div className="topTagsDashboard" data-testid="top-tags">
-            <span className="topTagsLabel">Top Tags:</span>
+            <span className="topTagsLabel">상위 태그:</span>
             {dashboardTopTags.slice(0, 3).map((tag) => (
               <span key={`${tag.type}-${tag.count}`} className="topTagChip">
-                {tag.type} <small>x{tag.count}</small>
+                <span title={tag.type}>{formatMistakeTag(tag.type)}</span> <small>x{tag.count}</small>
               </span>
             ))}
           </div>
@@ -363,13 +380,13 @@ export default function HomePage() {
           <div className="notesBrowser">
             <div className="notesHeader">
               <h3>
-                {notebooksState?.notebooks[selectedNotebookId]?.name ?? "Notebook"}
+                {notebooksState?.notebooks[selectedNotebookId]?.name ?? "노트북"}
                 <span className="noteCount">({filteredNotes.length})</span>
               </h3>
             </div>
             
             {filteredNotes.length === 0 ? (
-              <div className="emptyNotes">Run grading to create notes</div>
+              <div className="emptyNotes">채점을 실행하면 노트가 생성됩니다</div>
             ) : (
               <div className="notesGrid">
                 {filteredNotes.map((note) => (
@@ -393,7 +410,9 @@ export default function HomePage() {
                     {note.tags && note.tags.length > 0 && (
                       <div className="noteTags">
                         {note.tags.slice(0, 2).map((t) => (
-                          <span key={`${note.id}-${t}`} className="miniTag">#{t}</span>
+                          <span key={`${note.id}-${t}`} className="miniTag" title={t}>
+                            #{formatMistakeTag(t)}
+                          </span>
                         ))}
                       </div>
                     )}
@@ -421,7 +440,7 @@ export default function HomePage() {
             >
               <strong>{item.subject === "math" ? "수학" : "물리"}</strong>
               <span>{item.score_total !== null ? `${item.score_total.toFixed(1)}점` : "진행중"}</span>
-              {item.top_tag && <small>#{item.top_tag}</small>}
+              {item.top_tag && <small title={item.top_tag}>#{formatMistakeType(item.top_tag)}</small>}
             </button>
           ))}
         </div>

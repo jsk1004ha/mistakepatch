@@ -157,12 +157,22 @@ def get_analysis(analysis_id: str) -> dict[str, Any] | None:
         if not header:
             return None
 
+        error_code = header["error_code"]
+
         result_obj: dict[str, Any] | None = None
         if header["result_json"]:
-            result_obj = json.loads(header["result_json"])
-            if isinstance(result_obj, dict):
-                result_obj.setdefault("answer_verdict", "unknown")
-                result_obj.setdefault("answer_verdict_reason", "정오 판단 정보가 부족합니다.")
+            try:
+                result_obj = json.loads(header["result_json"])
+            except json.JSONDecodeError:
+                result_obj = None
+                if not error_code:
+                    error_code = "CORRUPT_RESULT_JSON"
+                elif "CORRUPT_RESULT_JSON" not in error_code:
+                    error_code = f"{error_code};CORRUPT_RESULT_JSON"
+            else:
+                if isinstance(result_obj, dict):
+                    result_obj.setdefault("answer_verdict", "unknown")
+                    result_obj.setdefault("answer_verdict_reason", "정오 판단 정보가 부족합니다.")
 
         mistake_rows = conn.execute(
             """
@@ -216,7 +226,7 @@ def get_analysis(analysis_id: str) -> dict[str, Any] | None:
             "problem_img_path": header["problem_img_path"],
             "result": result_obj,
             "fallback_used": bool(header["fallback_used"]),
-            "error_code": header["error_code"],
+            "error_code": error_code,
             "created_at": header["created_at"],
             "updated_at": header["updated_at"],
         }

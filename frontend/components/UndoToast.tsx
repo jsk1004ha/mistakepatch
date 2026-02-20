@@ -32,17 +32,17 @@ export function UndoToast({
   if (!isOpen) return null;
 
   return (
-    <div className={styles.toast} role="status" aria-live="polite" data-testid="autosave-toast">
-      <p className={styles.message}>Analysis saved to Inbox.</p>
+    <div className={styles.toast} aria-live="polite" data-testid="autosave-toast">
+      <p className={styles.message}>분석 결과를 수신함에 저장했어요.</p>
       <div className={styles.actions}>
         <button type="button" onClick={onUndo} className={styles.actionPrimary} data-testid="autosave-undo">
-          Undo
+          되돌리기
         </button>
         <button type="button" onClick={onMoveToTrash} className={styles.action} data-testid="autosave-trash">
-          Move to Trash
+          휴지통으로
         </button>
-        <button type="button" onClick={onMoveToNotebook} className={styles.action}>
-          Move to Notebook (Coming soon)
+        <button type="button" onClick={onMoveToNotebook} className={styles.action} disabled>
+          노트북으로 이동(준비중)
         </button>
       </div>
     </div>

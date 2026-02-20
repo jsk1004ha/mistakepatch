@@ -15,6 +15,7 @@ from ..models import (
     AnalysisMeta,
     AnalyzeDetailResponse,
     AnalyzeResponse,
+    AnalyzeStatus,
     AnnotationRequest,
     AnnotationResponse,
     HealthResponse,
@@ -53,7 +54,7 @@ def _save_upload(upload: UploadFile) -> str:
     if len(payload) > settings.max_upload_bytes:
         raise HTTPException(status_code=400, detail="File too large.")
     target_path.parent.mkdir(parents=True, exist_ok=True)
-    target_path.write_bytes(payload)
+    _ = target_path.write_bytes(payload)
     return str(target_path.resolve())
 
 
@@ -109,12 +110,22 @@ async def analyze(
     solution_path = _save_upload(solution_image)
     problem_path = _save_upload(problem_image) if problem_image else None
 
-    submission_id = create_submission(
-        subject=meta_obj.subject.value,
-        solution_img_path=solution_path,
-        problem_img_path=problem_path,
-    )
-    analysis_id = create_analysis(submission_id=submission_id)
+    try:
+        submission_id = create_submission(
+            subject=meta_obj.subject.value,
+            solution_img_path=solution_path,
+            problem_img_path=problem_path,
+        )
+        analysis_id = create_analysis(submission_id=submission_id)
+    except Exception as exc:
+        for path in (solution_path, problem_path):
+            if not path:
+                continue
+            try:
+                Path(path).unlink(missing_ok=True)
+            except Exception:
+                pass
+        raise HTTPException(status_code=500, detail=f"Failed to create analysis record: {exc}") from exc
 
     payload = {
         "analysis_id": analysis_id,
@@ -125,11 +136,14 @@ async def analyze(
         "problem_image_path": problem_path,
     }
 
-    queued = queue_manager.enqueue_analysis(payload)
+    try:
+        queued = queue_manager.enqueue_analysis(payload)
+    except Exception:
+        queued = False
     if not queued:
         background_tasks.add_task(process_analysis_job, payload)
 
-    return AnalyzeResponse(analysis_id=analysis_id, status="queued")
+    return AnalyzeResponse(analysis_id=analysis_id, status=AnalyzeStatus.queued)
 
 
 @router.get("/analysis/{analysis_id}", response_model=AnalyzeDetailResponse)

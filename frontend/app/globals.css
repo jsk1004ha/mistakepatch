@@ -236,6 +236,37 @@ button:disabled {
   width: 220px;
 }
 
+@media (max-width: 900px) {
+  .workspace {
+    padding: 14px;
+    min-height: auto;
+  }
+
+  .problemPreview {
+    position: static;
+    width: min(520px, 100%);
+    margin: 0 0 12px;
+  }
+
+  .noteCanvasFrame {
+    height: 52vh;
+    min-height: 340px;
+  }
+
+  .floatingFeedback {
+    position: static;
+    top: auto;
+    right: auto;
+    width: 100%;
+    min-width: 0;
+    margin-top: 12px;
+  }
+
+  .floatingBody {
+    max-height: 42vh;
+  }
+}
+
 .floatingHeader {
   padding: 10px 12px;
   border-bottom: 1px solid var(--line);

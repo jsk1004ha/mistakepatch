@@ -3,6 +3,7 @@
 import { StudyNote } from "@/components/StudyNote";
 import { SYSTEM_NOTEBOOK_IDS } from "@/lib/notebooks/storage";
 import type { Note, Notebook } from "@/lib/notebooks/types";
+import type { AnalysisResult } from "@/lib/types";
 
 type NoteDetailModalProps = {
   note: Note | null;
@@ -14,6 +15,12 @@ type NoteDetailModalProps = {
 
 export function NoteDetailModal({ note, notebooks, onClose, onMoveNote, onDeleteNote }: NoteDetailModalProps) {
   if (!note) return null;
+
+  const { fallback_used, error_code, ...snapshotResult } = note.snapshot;
+  const studyResult: AnalysisResult = {
+    ...snapshotResult,
+    missing_info: [],
+  };
 
   return (
     <div
@@ -35,10 +42,10 @@ export function NoteDetailModal({ note, notebooks, onClose, onMoveNote, onDelete
     >
       <div className="noteDetailPanel">
         <div className="noteDetailHeader">
-          <h2>Note Detail</h2>
+          <h2>노트 상세</h2>
           <div style={{ display: "flex", gap: "1rem", alignItems: "center" }}>
             <label style={{ display: "flex", alignItems: "center", gap: "0.5rem", fontSize: "0.9rem" }}>
-              Move to
+              이동
               <select
                 value={note.notebookId}
                 onChange={(e) => onMoveNote(note.id, e.target.value)}
@@ -61,15 +68,15 @@ export function NoteDetailModal({ note, notebooks, onClose, onMoveNote, onDelete
               onClick={() => onDeleteNote(note.id)}
               data-testid="note-delete"
             >
-              Delete
+              삭제
             </button>
             <button type="button" className="ghostBtn" onClick={onClose}>
-              Close
+              닫기
             </button>
           </div>
         </div>
         <div className="noteDetailContent">
-          <StudyNote result={note.snapshot as any} />
+          <StudyNote result={studyResult} />
         </div>
       </div>
     </div>

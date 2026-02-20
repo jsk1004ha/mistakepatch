@@ -170,6 +170,10 @@ export function useAnalysisFlow({
     [analysis, needsTapAnnotation, selectedMistake, setError, setInfo],
   );
 
+  const clearCurrentAnalysis = useCallback(() => {
+    setAnalysis(null);
+  }, []);
+
   return {
     isSubmitting,
     analysis,
@@ -180,5 +184,6 @@ export function useAnalysisFlow({
     runAnalysis,
     handleSelectHistory,
     handleAnnotationTap,
+    clearCurrentAnalysis,
   };
 }

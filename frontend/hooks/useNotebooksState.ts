@@ -82,14 +82,14 @@ export function useNotebooksState({ setInfo }: UseNotebooksStateOptions) {
     try {
       saveState(nextState);
       setNotebooksState(nextState);
-      setInfo("자동 저장한 노트를 Trash로 이동했습니다.");
+      setInfo("자동 저장한 노트를 휴지통으로 이동했습니다.");
       setAutosaveToast(null);
     } catch (err) {
       if (err instanceof Error && err.message === "STORAGE_WRITE_FAILURE") {
-        setInfo("Trash 이동에 실패했습니다. 브라우저 저장 공간을 확인해 주세요.");
+        setInfo("휴지통 이동에 실패했습니다. 브라우저 저장 공간을 확인해 주세요.");
         return;
       }
-      setInfo("Trash 이동 중 오류가 발생했습니다.");
+      setInfo("휴지통 이동 중 오류가 발생했습니다.");
     }
   }, [autosaveToast, setInfo]);
 

@@ -387,6 +387,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
   useEffect(() => {
     resizeCanvas();
     const observer = new ResizeObserver(() => resizeCanvas());
+    const drawQueue = drawQueueRef.current;
     if (frameRef.current) {
       observer.observe(frameRef.current);
     }
@@ -397,7 +398,7 @@ export const NoteCanvas = forwardRef<NoteCanvasHandle, NoteCanvasProps>(function
         window.cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
-      drawQueueRef.current.length = 0;
+      drawQueue.length = 0;
     };
   }, [resizeCanvas, stopSession]);
 
