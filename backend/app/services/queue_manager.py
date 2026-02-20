@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Literal
 
 from ..config import settings
 
@@ -24,7 +24,7 @@ class QueueManager:
                 self._queue = None
 
     @property
-    def mode(self) -> str:
+    def mode(self) -> Literal["redis", "background"]:
         return "redis" if self._queue is not None else "background"
 
     def enqueue_analysis(self, payload: dict[str, Any]) -> bool:
@@ -36,4 +36,3 @@ class QueueManager:
 
 
 queue_manager = QueueManager()
-

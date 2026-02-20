@@ -13,14 +13,14 @@ export function createDefaultState(): NotebooksState {
     notebooks: {
       [SYSTEM_NOTEBOOK_IDS.INBOX]: {
         id: SYSTEM_NOTEBOOK_IDS.INBOX,
-        name: "Inbox",
+        name: "수신함",
         system: true,
         sortOrder: 0,
         createdAt: new Date().toISOString(),
       },
       [SYSTEM_NOTEBOOK_IDS.TRASH]: {
         id: SYSTEM_NOTEBOOK_IDS.TRASH,
-        name: "Trash",
+        name: "휴지통",
         system: true,
         sortOrder: 1,
         createdAt: new Date().toISOString(),

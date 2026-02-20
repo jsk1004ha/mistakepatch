@@ -1,10 +1,12 @@
 "use client";
 
 import type { HistoryItem } from "@/lib/types";
+import type { MistakeType } from "@/lib/types";
+import { formatMistakeType } from "@/lib/mistakeTypeLabels";
 
 interface HistoryPanelProps {
   items: HistoryItem[];
-  topTags: Array<{ type: string; count: number }>;
+  topTags: Array<{ type: MistakeType; count: number }>;
   onSelect: (analysisId: string) => Promise<void>;
 }
 
@@ -17,6 +19,7 @@ export function HistoryPanel({ items, topTags, onSelect }: HistoryPanelProps) {
         <div className="historyList">
           {items.map((item) => (
             <button
+              type="button"
               key={item.analysis_id}
               className="historyItem"
               onClick={() => onSelect(item.analysis_id)}
@@ -27,7 +30,7 @@ export function HistoryPanel({ items, topTags, onSelect }: HistoryPanelProps) {
               </div>
               <div>
                 <span>{item.score_total !== null ? `${item.score_total.toFixed(1)}점` : "채점중"}</span>
-                {item.top_tag && <small>#{item.top_tag}</small>}
+                {item.top_tag && <small title={item.top_tag}>#{formatMistakeType(item.top_tag)}</small>}
               </div>
             </button>
           ))}
@@ -38,7 +41,7 @@ export function HistoryPanel({ items, topTags, onSelect }: HistoryPanelProps) {
       <ul className="topTagList">
         {topTags.map((tag) => (
           <li key={tag.type}>
-            <span>{tag.type}</span>
+            <span title={tag.type}>{formatMistakeType(tag.type)}</span>
             <strong>{tag.count}</strong>
           </li>
         ))}
@@ -46,4 +49,3 @@ export function HistoryPanel({ items, topTags, onSelect }: HistoryPanelProps) {
     </section>
   );
 }
-

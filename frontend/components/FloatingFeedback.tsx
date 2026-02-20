@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import type { AnalysisDetail, AnalyzeStatus, Mistake } from "@/lib/types";
+import { formatMistakeType } from "@/lib/mistakeTypeLabels";
 
 type FeedbackTab = "mistakes" | "patch" | "checklist";
 
@@ -50,12 +51,19 @@ export function FloatingFeedback({
             {analysis ? statusText(analysis.status) : isSubmitting ? "분석 요청 중" : "대기"}
           </span>
         </div>
-        <button onClick={() => setCollapsed((prev) => !prev)}>{collapsed ? "열기" : "닫기"}</button>
+        <button
+          type="button"
+          onClick={() => setCollapsed((prev) => !prev)}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "피드백 패널 열기" : "피드백 패널 접기"}
+        >
+          {collapsed ? "열기" : "닫기"}
+        </button>
       </header>
 
       {!collapsed && (
         <div className="floatingBody">
-          {!analysis && <p>필기를 작성한 뒤 `채점 실행`을 누르면 피드백이 여기에 표시됩니다.</p>}
+          {!analysis && <p>필기를 작성한 뒤 &quot;채점 실행&quot;을 누르면 피드백이 여기에 표시됩니다.</p>}
           {analysis && !result && <p>분석 중입니다. 잠시만 기다려 주세요.</p>}
 
           {result && (
@@ -77,6 +85,7 @@ export function FloatingFeedback({
 
               <div className="tabRow">
                 <button
+                  type="button"
                   className={activeTab === "mistakes" ? "active" : ""}
                   onClick={() => onTabChange("mistakes")}
                   data-testid="feedback-tab-mistakes"
@@ -84,6 +93,7 @@ export function FloatingFeedback({
                   감점
                 </button>
                 <button
+                  type="button"
                   className={activeTab === "patch" ? "active" : ""}
                   onClick={() => onTabChange("patch")}
                   data-testid="feedback-tab-patch"
@@ -91,6 +101,7 @@ export function FloatingFeedback({
                   패치
                 </button>
                 <button
+                  type="button"
                   className={activeTab === "checklist" ? "active" : ""}
                   onClick={() => onTabChange("checklist")}
                   data-testid="feedback-tab-checklist"
@@ -106,13 +117,14 @@ export function FloatingFeedback({
                   )}
                   {mistakes.map((mistake, index) => (
                     <button
+                      type="button"
                       key={mistake.mistake_id ?? `${mistake.type}-${index}`}
                       className={`mistakeCard ${index === selectedIndex ? "active" : ""}`}
                       onClick={() => onSelectIndex(index)}
                       data-testid={`mistake-card-${index}`}
                     >
                       <div className="cardTop">
-                        <strong>{mistake.type}</strong>
+                        <strong title={mistake.type}>{formatMistakeType(mistake.type)}</strong>
                         <span>-{mistake.points_deducted.toFixed(1)}점</span>
                       </div>
                       <p>{mistake.fix_instruction}</p>

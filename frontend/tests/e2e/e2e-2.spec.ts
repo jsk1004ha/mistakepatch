@@ -30,10 +30,10 @@ test("E2E 2", async ({ page }) => {
 
   await ensureNotebooksDrawerOpen();
 
-  await page.getByRole("button", { name: /^\+\s*New Notebook$/ }).click();
-  const notebookInput = page.getByRole("textbox").last();
+  await page.getByTestId("drawer-new-notebook").click();
+  const notebookInput = page.getByTestId("drawer-new-notebook-name");
   await notebookInput.fill(notebookName);
-  await page.getByRole("button", { name: "Create" }).click();
+  await page.getByTestId("drawer-create-notebook").click();
   await expect(page.getByText(notebookName, { exact: true }).first()).toBeVisible();
 
   await closeNotebooksDrawerIfOpen();
@@ -58,7 +58,7 @@ test("E2E 2", async ({ page }) => {
   const firstRestoreButton = page.locator('[data-testid^="trash-restore-"]').first();
   await expect(firstRestoreButton).toBeVisible({ timeout: 15_000 });
   await firstRestoreButton.click();
-  await page.getByRole("button", { name: /Back to Notebooks/ }).click();
+  await page.getByTestId("drawer-back").click();
   await expect(page.getByText(notebookName, { exact: true }).first()).toBeVisible();
 
   await ensureNotebooksDrawerOpen();
@@ -74,8 +74,8 @@ test("E2E 2", async ({ page }) => {
 
   await ensureNotebooksDrawerOpen();
   await page.getByTestId("notebook-item-trash").click();
-  page.once("dialog", (dialog) => dialog.accept());
   await page.getByTestId("trash-empty").click();
+  await page.getByTestId("confirm-ok").click();
 
   await page.reload();
   await ensureNotebooksDrawerOpen();

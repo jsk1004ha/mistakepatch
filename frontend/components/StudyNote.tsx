@@ -1,5 +1,6 @@
 import React from "react";
 import type { AnalysisResult, Mistake, PatchChange } from "@/lib/types";
+import { formatMistakeType } from "@/lib/mistakeTypeLabels";
 import styles from "./StudyNote.module.css";
 
 interface StudyNoteProps {
@@ -10,7 +11,7 @@ export function StudyNote({ result }: StudyNoteProps) {
   if (!result) {
     return (
       <div className={styles.container}>
-        <p className={styles.emptyState}>No analysis result available.</p>
+        <p className={styles.emptyState}>분석 결과가 없습니다.</p>
       </div>
     );
   }
@@ -30,7 +31,7 @@ export function StudyNote({ result }: StudyNoteProps) {
     <div className={styles.container}>
       {/* Header */}
       <header className={styles.header}>
-        <h1 className={styles.title}>Study Note</h1>
+        <h1 className={styles.title}>학습 노트</h1>
         <div className={styles.score}>
           {score_total != null ? score_total.toFixed(1) : "-"} <span style={{ fontSize: "1rem", fontWeight: 400 }}>/ 10</span>
         </div>
@@ -42,33 +43,36 @@ export function StudyNote({ result }: StudyNoteProps) {
       {/* Rubric Breakdown */}
       <section className={styles.section}>
         <div className={styles.sectionTitle}>
-          <span>Rubric Breakdown</span>
+          <span>루브릭 점수</span>
         </div>
         <div className={styles.rubricGrid}>
-          <RubricItem label="Conditions" value={rubric_scores?.conditions} />
-          <RubricItem label="Modeling" value={rubric_scores?.modeling} />
-          <RubricItem label="Logic" value={rubric_scores?.logic} />
-          <RubricItem label="Calculation" value={rubric_scores?.calculation} />
-          <RubricItem label="Final Answer" value={rubric_scores?.final} />
+          <RubricItem label="조건" value={rubric_scores?.conditions} />
+          <RubricItem label="모델링" value={rubric_scores?.modeling} />
+          <RubricItem label="논리" value={rubric_scores?.logic} />
+          <RubricItem label="계산" value={rubric_scores?.calculation} />
+          <RubricItem label="최종 답" value={rubric_scores?.final} />
         </div>
       </section>
 
       {/* Mistakes */}
       <section className={styles.section}>
         <div className={styles.sectionTitle}>
-          <span>Mistakes Identified</span>
+          <span>감점 포인트</span>
           <span style={{ fontSize: "0.8em", color: "#888", fontWeight: 400 }}>
             ({mistakes.length})
           </span>
         </div>
         
         {mistakes.length === 0 ? (
-          <p className={styles.emptyState}>No mistakes found. Great job!</p>
+          <p className={styles.emptyState}>실수가 발견되지 않았어요. 잘했어요!</p>
         ) : (
           <div className={styles.mistakeList}>
             {mistakes.map((mistake, index) => (
               <MistakeCard 
-                key={mistake.mistake_id ?? index} 
+                key={
+                  mistake.mistake_id ??
+                  `${mistake.type}-${mistake.location_hint ?? ""}-${mistake.points_deducted ?? ""}-${mistake.evidence ?? ""}`
+                }
                 mistake={mistake} 
               />
             ))}
@@ -79,23 +83,23 @@ export function StudyNote({ result }: StudyNoteProps) {
       {/* Patch */}
       <section className={styles.section}>
         <div className={styles.sectionTitle}>
-          <span>Recommended Patch</span>
+          <span>패치 제안</span>
         </div>
         <div className={styles.patchContainer}>
           {patch?.patched_solution_brief ? (
              <p className={styles.patchBrief}>&ldquo;{patch.patched_solution_brief}&rdquo;</p>
           ) : (
-             <p className={styles.emptyState}>No patch summary available.</p>
+             <p className={styles.emptyState}>패치 요약이 없습니다.</p>
           )}
 
           {patch?.minimal_changes?.length > 0 ? (
             <div className={styles.changeList}>
               {patch.minimal_changes.map((change, index) => (
-                <PatchChangeItem key={index} change={change} />
+                <PatchChangeItem key={`${change.change}-${change.rationale}`} change={change} />
               ))}
             </div>
           ) : (
-             <p className={styles.emptyState}>No specific changes recommended.</p>
+             <p className={styles.emptyState}>추천 변경사항이 없습니다.</p>
           )}
         </div>
       </section>
@@ -103,14 +107,14 @@ export function StudyNote({ result }: StudyNoteProps) {
       {/* Checklist */}
       <section className={styles.section}>
         <div className={styles.sectionTitle}>
-          <span>Next Checklist</span>
+          <span>다음 체크리스트</span>
         </div>
         {next_checklist.length === 0 ? (
-          <p className={styles.emptyState}>No checklist items provided.</p>
+          <p className={styles.emptyState}>체크리스트가 없습니다.</p>
         ) : (
           <ul className={styles.checklist}>
             {next_checklist.map((item, index) => (
-              <li key={index} className={styles.checklistItem}>
+              <li key={item} className={styles.checklistItem}>
                 <div className={styles.checkbox} />
                 <span>{item}</span>
               </li>
@@ -121,7 +125,7 @@ export function StudyNote({ result }: StudyNoteProps) {
       
       {/* Footer / Meta */}
       <div style={{ textAlign: "right", fontSize: "0.75rem", color: "#aaa", marginTop: "2rem" }}>
-        Confidence: {confidence != null ? (confidence * 100).toFixed(0) : 0}%
+        신뢰도: {confidence != null ? (confidence * 100).toFixed(0) : 0}%
       </div>
     </div>
   );
@@ -140,25 +144,27 @@ function MistakeCard({ mistake }: { mistake: Mistake }) {
   const points = mistake.points_deducted;
   const deductionLabel =
     typeof points === "number" && Number.isFinite(points) && Math.abs(points) < 0.05
-      ? "On hold"
-      : `-${points != null ? points.toFixed(1) : "?"} pts`;
+      ? "보류"
+      : `-${points != null ? points.toFixed(1) : "?"}점`;
 
   return (
-    <div className={styles.mistakeCard}>
-      <div className={styles.mistakeHeader}>
-        <span className={styles.mistakeType}>{mistake.type}</span>
-        <span className={styles.mistakeDeduction}>{deductionLabel}</span>
-      </div>
+      <div className={styles.mistakeCard}>
+        <div className={styles.mistakeHeader}>
+          <span className={styles.mistakeType} title={mistake.type}>
+            {formatMistakeType(mistake.type)}
+          </span>
+          <span className={styles.mistakeDeduction}>{deductionLabel}</span>
+        </div>
       <div className={styles.mistakeDetails}>
-        <div><strong>Fix:</strong> {mistake.fix_instruction}</div>
+        <div><strong>수정:</strong> {mistake.fix_instruction}</div>
         
         <div className={styles.mistakeDetailRow}>
-           <span className={styles.detailLabel}>Evidence:</span>
+           <span className={styles.detailLabel}>근거:</span>
            <span>{mistake.evidence}</span>
         </div>
         {mistake.location_hint && (
            <div className={styles.mistakeDetailRow}>
-              <span className={styles.detailLabel}>Loc:</span>
+              <span className={styles.detailLabel}>위치:</span>
               <span>{mistake.location_hint}</span>
            </div>
         )}

@@ -4,6 +4,7 @@ import base64
 import sys
 import time
 import unittest
+from typing import Any
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -11,6 +12,7 @@ from fastapi.testclient import TestClient
 sys.path.append(str(Path(__file__).resolve().parents[1]))
 
 from app.main import create_app
+from app.db import get_connection
 
 
 PNG_1X1 = base64.b64decode(
@@ -22,7 +24,7 @@ class APITestCase(unittest.TestCase):
     def _client(self) -> TestClient:
         return TestClient(create_app())
 
-    def _multipart(self, meta: str = '{"subject":"math","highlight_mode":"tap"}') -> dict:
+    def _multipart(self, meta: str = '{"subject":"math","highlight_mode":"tap"}') -> dict[str, Any]:
         return {
             "files": {"solution_image": ("solution.png", PNG_1X1, "image/png")},
             "data": {"meta": meta},
@@ -34,6 +36,13 @@ class APITestCase(unittest.TestCase):
             self.assertEqual(response.status_code, 400)
             self.assertIn("solution_image", response.json()["detail"])
 
+    def test_analyze_rejects_invalid_meta_json(self) -> None:
+        with self._client() as client:
+            payload = self._multipart(meta="{not-json")
+            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            self.assertEqual(response.status_code, 400)
+            self.assertIn("Invalid meta", response.json()["detail"])
+
     def test_analyze_transitions_to_done_and_supports_annotations(self) -> None:
         with self._client() as client:
             payload = self._multipart()
@@ -41,7 +50,7 @@ class APITestCase(unittest.TestCase):
             self.assertEqual(response.status_code, 200)
             analysis_id = response.json()["analysis_id"]
 
-            detail = None
+            detail: dict[str, Any] = {}
             for _ in range(10):
                 detail_resp = client.get(f"/api/v1/analysis/{analysis_id}")
                 self.assertEqual(detail_resp.status_code, 200)
@@ -50,10 +59,12 @@ class APITestCase(unittest.TestCase):
                     break
                 time.sleep(0.2)
 
-            self.assertIsNotNone(detail)
-            self.assertEqual(detail["status"], "done")
-            self.assertIsNotNone(detail["result"])
-            mistakes = detail["result"]["mistakes"]
+            self.assertTrue(detail)
+            self.assertEqual(detail.get("status"), "done")
+            result = detail.get("result")
+            self.assertIsNotNone(result)
+            assert result is not None
+            mistakes = result["mistakes"]
             self.assertGreaterEqual(len(mistakes), 1)
             first_mistake = mistakes[0]
             self.assertIn("mistake_id", first_mistake)
@@ -74,6 +85,34 @@ class APITestCase(unittest.TestCase):
             self.assertEqual(ann_resp.status_code, 200)
             self.assertEqual(ann_resp.json()["analysis_id"], analysis_id)
 
+    def test_analysis_detail_survives_corrupt_result_json(self) -> None:
+        with self._client() as client:
+            payload = self._multipart()
+            response = client.post("/api/v1/analyze", files=payload["files"], data=payload["data"])
+            self.assertEqual(response.status_code, 200)
+            analysis_id = response.json()["analysis_id"]
+
+            detail: dict[str, Any] = {}
+            for _ in range(10):
+                detail_resp = client.get(f"/api/v1/analysis/{analysis_id}")
+                self.assertEqual(detail_resp.status_code, 200)
+                detail = detail_resp.json()
+                if detail["status"] in {"done", "failed"}:
+                    break
+                time.sleep(0.2)
+            self.assertTrue(detail)
+            self.assertEqual(detail.get("status"), "done")
+
+            with get_connection() as conn:
+                conn.execute("UPDATE analyses SET result_json = ? WHERE id = ?", ("{corrupt", analysis_id))
+                conn.commit()
+
+            corrupted = client.get(f"/api/v1/analysis/{analysis_id}")
+            self.assertEqual(corrupted.status_code, 200)
+            body = corrupted.json()
+            self.assertIsNone(body["result"])
+            self.assertIn("CORRUPT_RESULT_JSON", body["error_code"] or "")
+
     def test_history_lists_recent_items(self) -> None:
         with self._client() as client:
             payload = self._multipart(meta='{"subject":"physics","highlight_mode":"tap"}')
@@ -90,4 +129,3 @@ class APITestCase(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

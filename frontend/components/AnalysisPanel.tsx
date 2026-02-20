@@ -215,7 +215,8 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
   const lastReloadTokenRef = useRef<string | null>(null);
 
   const result = analysis.result;
-  const mistakes = result?.mistakes ?? [];
+  const analysisId = analysis.analysis_id;
+  const mistakes = useMemo(() => result?.mistakes ?? [], [result?.mistakes]);
   const selectedMistake = mistakes[selectedIndex];
   const imageUrl = toAbsoluteImageUrl(analysis.solution_image_url);
   const fallbackHint = getFallbackHint(analysis.error_code);
@@ -266,12 +267,13 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
   }, [selectedMistake]);
 
   useEffect(() => {
+    void analysisId;
     setProgressTick(0);
     setLiveProgress(null);
     setIsSseConnected(false);
     setStreamFallback(false);
     lastReloadTokenRef.current = null;
-  }, [analysis.analysis_id]);
+  }, [analysisId]);
 
   useEffect(() => {
     if (selectedIndex < mistakes.length) return;
@@ -280,11 +282,12 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
 
   useEffect(() => {
     if (!isAnalyzing) return;
+    void analysisId;
     const timer = window.setInterval(() => {
       setProgressTick((prev) => prev + 1);
     }, 900);
     return () => window.clearInterval(timer);
-  }, [analysis.analysis_id, isAnalyzing]);
+  }, [analysisId, isAnalyzing]);
 
   useEffect(() => {
     if (!isAnalyzing) return;
@@ -293,7 +296,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
       return;
     }
 
-    const stream = new EventSource(getAnalysisEventsUrl(analysis.analysis_id));
+    const stream = new EventSource(getAnalysisEventsUrl(analysisId));
     let closed = false;
 
     stream.onopen = () => {
@@ -303,7 +306,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
 
     stream.onmessage = (event) => {
       const nextProgress = parseProgressEvent(event.data);
-      if (!nextProgress || nextProgress.analysis_id !== analysis.analysis_id) return;
+      if (!nextProgress || nextProgress.analysis_id !== analysisId) return;
 
       setLiveProgress(nextProgress);
 
@@ -334,20 +337,21 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
       }
       setIsSseConnected(false);
     };
-  }, [analysis.analysis_id, isAnalyzing, onReload]);
+  }, [analysisId, isAnalyzing, onReload]);
 
   useEffect(() => {
     if (!isAnalyzing) return;
+    void analysisId;
     const intervalMs = isSseConnected ? 4200 : 1600;
     const timer = window.setInterval(() => {
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
       void onReload().catch(() => undefined);
     }, intervalMs);
     return () => window.clearInterval(timer);
-  }, [analysis.analysis_id, isAnalyzing, isSseConnected, onReload]);
+  }, [analysisId, isAnalyzing, isSseConnected, onReload]);
 
   const handleAnnotationFromPoint = useCallback(
-    async (clientX: number, clientY: number, target: HTMLImageElement, isTouchInput: boolean) => {
+    async (clientX: number, clientY: number, target: HTMLElement, isTouchInput: boolean) => {
       if (!selectedMistake || !selectedMistake.mistake_id) return;
       if (selectedMistake.highlight.mode !== "tap") return;
       if (hasBox(selectedMistake)) return;
@@ -365,7 +369,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
       }
 
       await onCreateAnnotation({
-        analysis_id: analysis.analysis_id,
+        analysis_id: analysisId,
         mistake_id: selectedMistake.mistake_id,
         mode: "tap",
         shape: "circle",
@@ -377,11 +381,11 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
       setNotice("하이라이트 위치를 저장했습니다.");
       await onReload();
     },
-    [analysis.analysis_id, onCreateAnnotation, onReload, selectedMistake],
+    [analysisId, onCreateAnnotation, onReload, selectedMistake],
   );
 
   const handleImageClick = useCallback(
-    async (event: MouseEvent<HTMLImageElement>) => {
+    async (event: MouseEvent<HTMLButtonElement>) => {
       if (event.button !== 0) return;
       await handleAnnotationFromPoint(event.clientX, event.clientY, event.currentTarget, false);
     },
@@ -389,7 +393,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
   );
 
   const handleImageTouchStart = useCallback(
-    async (event: TouchEvent<HTMLImageElement>) => {
+    async (event: TouchEvent<HTMLButtonElement>) => {
       if (event.touches.length === 0) return;
       event.preventDefault();
       const touch = event.touches[0];
@@ -452,18 +456,20 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
             <div className="scoreCard">
               <strong>{result.score_total.toFixed(1)} / 10</strong>
               <span>
-                {formatVerdictLabel(result.answer_verdict)} | confidence {(result.confidence * 100).toFixed(0)}%
+                {formatVerdictLabel(result.answer_verdict)} | 신뢰도 {(result.confidence * 100).toFixed(0)}%
               </span>
               <span>{result.answer_verdict_reason}</span>
             </div>
             <div className="imageWrap">
-              <img
-                src={imageUrl}
-                alt="solution"
-                className="analysisImage"
+              <button
+                type="button"
+                className="analysisImageButton"
                 onClick={handleImageClick}
                 onTouchStart={handleImageTouchStart}
-              />
+                aria-label="감점 위치 지정 (클릭/터치)"
+              >
+                <img src={imageUrl} alt="풀이" className="analysisImage" />
+              </button>
               {overlays.map(({ mistake, index }) => {
                 const highlight = mistake.highlight;
                 return (
@@ -495,11 +501,11 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
               )}
               {activeTab === "patch" && selectedMistake && hasBox(selectedMistake) && compareCalloutStyle && (
                 <div className="compareCallout" style={compareCalloutStyle}>
-                  <span className="compareTag mistake">Mistake</span>
+                  <span className="compareTag mistake">감점</span>
                   <p className="compareText mistake" style={{ opacity: mistakeTextOpacity }}>
                     {selectedMistake.evidence}
                   </p>
-                  <span className="compareTag patch">Patch</span>
+                  <span className="compareTag patch">패치</span>
                   <p className="compareText patch" style={{ opacity: patchTextOpacity }}>
                     {patchPreviewText}
                   </p>
@@ -517,18 +523,21 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
           <div className="detailPane">
             <div className="tabRow">
               <button
+                type="button"
                 className={activeTab === "mistakes" ? "active" : ""}
                 onClick={() => setActiveTab("mistakes")}
               >
                 감점 포인트
               </button>
               <button
+                type="button"
                 className={activeTab === "patch" ? "active" : ""}
                 onClick={() => setActiveTab("patch")}
               >
                 최소 수정 패치
               </button>
               <button
+                type="button"
                 className={activeTab === "checklist" ? "active" : ""}
                 onClick={() => setActiveTab("checklist")}
               >
@@ -540,6 +549,7 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
               <div className="cardList">
                 {mistakes.map((mistake, index) => (
                   <button
+                    type="button"
                     key={mistake.mistake_id ?? `${mistake.type}-${index}`}
                     className={`mistakeCard ${index === selectedIndex ? "active" : ""}`}
                     onClick={() => setSelectedIndex(index)}
@@ -559,12 +569,14 @@ export function AnalysisPanel({ analysis, onReload, onCreateAnnotation }: Analys
               <div className="patchBox">
                 <div className="compareControls">
                   <button
+                    type="button"
                     className={compareMode === "slider" ? "active" : ""}
                     onClick={() => setCompareMode("slider")}
                   >
                     Before / After
                   </button>
                   <button
+                    type="button"
                     className={compareMode === "overlay" ? "active" : ""}
                     onClick={() => setCompareMode("overlay")}
                   >

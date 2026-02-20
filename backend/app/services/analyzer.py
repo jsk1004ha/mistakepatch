@@ -546,6 +546,8 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
         if not isinstance(raw, dict):
             continue
         normalized_mistakes.append(_normalize_mistake(raw))
+    normalized_mistakes = _deduplicate_mistakes(normalized_mistakes)
+    normalized_mistakes = _sort_mistakes(normalized_mistakes)
     payload["mistakes"] = normalized_mistakes
 
     patch = payload.get("patch")
@@ -596,23 +598,29 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
             if len(checklist_items) >= 3:
                 break
     if not checklist_items:
-        candidates = [
-            normalized_mistakes[0]["fix_instruction"] if normalized_mistakes else "최종 답 검산 수행",
-            "최종 줄의 단위/기호/부호를 다시 확인하세요.",
-            "조건 누락 여부를 체크한 뒤 답을 마무리하세요.",
-        ]
-        for item in candidates:
-            text = _clean_text(item, "", 80)
-            if text and text not in checklist_items:
-                checklist_items.append(text)
-            if len(checklist_items) >= 3:
-                break
+        checklist_items.extend(_build_checklist_from_mistakes(normalized_mistakes))
+        if len(checklist_items) < 3:
+            candidates = [
+                "최종 줄의 단위/기호/부호를 다시 확인하세요.",
+                "조건 누락 여부를 체크한 뒤 답을 마무리하세요.",
+            ]
+            for item in candidates:
+                text = _clean_text(item, "", 80)
+                if text and text not in checklist_items:
+                    checklist_items.append(text)
+                if len(checklist_items) >= 3:
+                    break
     payload["next_checklist"] = checklist_items[:3] if checklist_items else ["핵심 계산 단계를 다시 확인하세요."]
 
     confidence = _to_float(payload.get("confidence"))
     if confidence is None:
         confidence = 0.62
-    payload["confidence"] = round(_clamp(confidence, 0.0, 1.0), 2)
+    payload["confidence"] = _calibrate_confidence(
+        base_confidence=confidence,
+        mistakes=normalized_mistakes,
+        score_total=payload["score_total"],
+        missing_info=payload.get("missing_info"),
+    )
 
     verdict = _normalize_answer_verdict(payload.get("answer_verdict"))
     payload["answer_verdict"] = verdict
@@ -632,6 +640,10 @@ def _ensure_required_defaults(payload: dict[str, Any]) -> None:
             normalized_missing.append(text)
     payload["missing_info"] = normalized_missing
 
+    _harmonize_score_with_deductions(payload)
+    _reconcile_rubric_with_score(payload)
+    _inject_uncertainty_hint(payload)
+
 
 def _normalize_mistake(item: dict[str, Any]) -> dict[str, Any]:
     valid_types = {member.value for member in MistakeType}
@@ -648,6 +660,7 @@ def _normalize_mistake(item: dict[str, Any]) -> dict[str, Any]:
     points = _to_float(item.get("points_deducted"))
     if points is None:
         points = 0.5
+    points = _normalize_points_by_severity(points, severity)
     points = round(_clamp(points, 0.0, 2.0), 2)
 
     highlight = item.get("highlight")
@@ -663,19 +676,34 @@ def _normalize_mistake(item: dict[str, Any]) -> dict[str, Any]:
     for key in ("x", "y", "w", "h"):
         value = _to_float(highlight.get(key))
         if value is not None:
-            normalized_highlight[key] = value
+            normalized_highlight[key] = _normalize_highlight_value(key, value)
+
+    if mode in {"ocr_box", "region_box"} and not all(
+        key in normalized_highlight for key in ("x", "y", "w", "h")
+    ):
+        # Incomplete non-tap highlights are misleading; fall back to tap mode.
+        normalized_highlight = {"mode": "tap", "shape": shape}
 
     return {
         "type": mistake_type,
         "severity": severity,
         "points_deducted": points,
-        "evidence": _clean_text(item.get("evidence"), "근거가 부족해 보완 설명이 필요합니다.", 240),
-        "fix_instruction": _clean_text(
-            item.get("fix_instruction"),
-            "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
-            240,
+        "evidence": _normalize_evidence(
+            _clean_text(item.get("evidence"), "근거가 부족해 보완 설명이 필요합니다.", 240),
+            mistake_type,
         ),
-        "location_hint": _clean_text(item.get("location_hint"), "풀이 중간 구간", 120),
+        "fix_instruction": _normalize_fix_instruction(
+            _clean_text(
+                item.get("fix_instruction"),
+                "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
+                240,
+            ),
+            mistake_type,
+        ),
+        "location_hint": _normalize_location_hint(
+            _clean_text(item.get("location_hint"), "풀이 중간 구간", 120),
+            mistake_type,
+        ),
         "highlight": normalized_highlight,
     }
 
@@ -693,7 +721,7 @@ def _clamp(value: float, min_value: float, max_value: float) -> float:
 
 
 def _to_float(value: Any) -> float | None:
-    if isinstance(value, Number):
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
         return float(value)
     if isinstance(value, str):
         try:
@@ -2384,3 +2412,241 @@ def _box_bounds(box: dict[str, Any]) -> tuple[float, float, float, float] | None
     if x1 <= x0 or y1 <= y0:
         return None
     return (x0, y0, x1, y1)
+
+def _normalize_points_by_severity(points: float, severity: str) -> float:
+    if severity == Severity.high.value:
+        return max(points, 1.0)
+    if severity == Severity.med.value:
+        return max(points, 0.4)
+    # low
+    return min(points, 0.8)
+
+
+def _normalize_highlight_value(key: str, value: float) -> float:
+    if key in {"x", "y"}:
+        return round(_clamp(value, 0.0, 1.0), 4)
+    # w/h
+    return round(_clamp(value, 0.02, 1.0), 4)
+
+
+def _deduplicate_mistakes(mistakes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    index_by_key: dict[str, int] = {}
+
+    for mistake in mistakes:
+        key = "|".join(
+            [
+                str(mistake.get("type") or ""),
+                _signature_text(mistake.get("location_hint")),
+                _signature_text(mistake.get("fix_instruction")),
+            ]
+        )
+        existing_idx = index_by_key.get(key)
+        if existing_idx is None:
+            index_by_key[key] = len(deduped)
+            deduped.append(mistake)
+            continue
+
+        existing = deduped[existing_idx]
+        existing_points = _to_float(existing.get("points_deducted")) or 0.0
+        new_points = _to_float(mistake.get("points_deducted")) or 0.0
+        if new_points > existing_points:
+            deduped[existing_idx] = mistake
+
+    return deduped[:20]
+
+
+def _sort_mistakes(mistakes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return sorted(
+        mistakes,
+        key=lambda item: (
+            _severity_rank(str(item.get("severity") or Severity.med.value)),
+            _to_float(item.get("points_deducted")) or 0.0,
+        ),
+        reverse=True,
+    )[:20]
+
+
+def _signature_text(value: Any) -> str:
+    text = _clean_text(value, "", 120).lower()
+    text = re.sub(r"\d+", "#", text)
+    return text
+
+
+def _build_checklist_from_mistakes(mistakes: list[dict[str, Any]]) -> list[str]:
+    ranked = sorted(
+        mistakes,
+        key=lambda item: (_severity_rank(str(item.get("severity") or "med")), _to_float(item.get("points_deducted")) or 0.0),
+        reverse=True,
+    )
+    checklist: list[str] = []
+    for item in ranked:
+        instruction = _clean_text(item.get("fix_instruction"), "", 80)
+        if instruction and instruction not in checklist:
+            checklist.append(instruction)
+        if len(checklist) >= 3:
+            break
+    if not checklist and mistakes:
+        fallback = _clean_text(mistakes[0].get("fix_instruction"), "최종 답 검산 수행", 80)
+        if fallback:
+            checklist.append(fallback)
+    return checklist[:3]
+
+
+def _normalize_fix_instruction(text: str, mistake_type: str) -> str:
+    normalized = text.strip()
+    if len(normalized) >= 12 and normalized not in {
+        "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
+        "수정 필요",
+        "다시 풀기",
+    }:
+        return normalized
+
+    template_map = {
+        MistakeType.sign_error.value: "이항과 전개 단계의 부호를 한 줄씩 다시 대조하세요.",
+        MistakeType.unit_error.value: "최종 줄과 중간 계산의 단위를 동일 기준으로 정리하세요.",
+        MistakeType.condition_missed.value: "문제 조건을 식 옆에 적고 누락 없이 반영하세요.",
+        MistakeType.algebra_error.value: "식 전개와 약분을 단계별로 나눠 재계산하세요.",
+        MistakeType.final_form_error.value: "최종 답을 원식에 다시 대입해 성립 여부를 확인하세요.",
+        MistakeType.logic_gap.value: "단계 간 연결 근거를 한 줄씩 보강하고 점프를 줄이세요.",
+    }
+    return template_map.get(mistake_type, "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.")
+
+
+def _normalize_location_hint(text: str, mistake_type: str) -> str:
+    normalized = text.strip()
+    if normalized and normalized not in {"풀이 중간 구간", "해당 부분"}:
+        return normalized
+
+    template_map = {
+        MistakeType.final_form_error.value: "최종 답 줄",
+        MistakeType.unit_error.value: "단위 표기 줄",
+        MistakeType.sign_error.value: "이항/부호 처리 줄",
+        MistakeType.condition_missed.value: "초기 조건 정리 줄",
+    }
+    return template_map.get(mistake_type, "풀이 중간 구간")
+
+
+def _normalize_evidence(text: str, mistake_type: str) -> str:
+    normalized = text.strip()
+    generic_phrases = {
+        "근거가 부족해 보완 설명이 필요합니다.",
+        "근거 부족",
+        "검토 필요",
+    }
+    if normalized and normalized not in generic_phrases and len(normalized) >= 10:
+        return normalized
+
+    template_map = {
+        MistakeType.final_form_error.value: "최종 답이 문제 조건 또는 식 검산 결과와 일치하지 않습니다.",
+        MistakeType.sign_error.value: "이항/전개 단계에서 부호 처리 불일치가 보입니다.",
+        MistakeType.unit_error.value: "중간 계산과 최종 답의 단위 표기가 일관되지 않습니다.",
+        MistakeType.algebra_error.value: "식 전개 또는 약분 과정의 계산 일관성이 부족합니다.",
+    }
+    return template_map.get(mistake_type, "감점 근거가 명확하지 않아 보수적으로 해석했습니다.")
+
+
+def _calibrate_confidence(
+    base_confidence: float,
+    mistakes: list[dict[str, Any]],
+    score_total: float,
+    missing_info: Any,
+) -> float:
+    confidence = _clamp(base_confidence, 0.0, 1.0)
+
+    missing_count = 0
+    if isinstance(missing_info, list):
+        missing_count = len([item for item in missing_info if _clean_text(item, "", 80)])
+    confidence -= min(0.32, missing_count * 0.08)
+
+    if not mistakes and score_total < 9.0:
+        confidence -= 0.1
+
+    incomplete_highlight_penalty = 0.0
+    for item in mistakes:
+        if not isinstance(item, dict):
+            continue
+        highlight = item.get("highlight")
+        if not isinstance(highlight, dict):
+            continue
+        mode = str(highlight.get("mode") or "tap")
+        if mode in {"ocr_box", "region_box"} and not all(
+            highlight.get(key) is not None for key in ("x", "y", "w", "h")
+        ):
+            incomplete_highlight_penalty += 0.06
+    confidence -= min(0.18, incomplete_highlight_penalty)
+
+    return round(_clamp(confidence, 0.0, 1.0), 2)
+
+
+def _harmonize_score_with_deductions(payload: dict[str, Any]) -> None:
+    mistakes = payload.get("mistakes")
+    if not isinstance(mistakes, list):
+        return
+
+    deduction_sum = 0.0
+    for item in mistakes:
+        if not isinstance(item, dict):
+            continue
+        deduction_sum += _to_float(item.get("points_deducted")) or 0.0
+
+    deduction_score = round(_clamp(10.0 - deduction_sum, 0.0, 10.0), 2)
+    score_total = _to_float(payload.get("score_total"))
+    if score_total is None:
+        payload["score_total"] = deduction_score
+        return
+
+    # Keep score and deduction narrative roughly aligned without hard overriding
+    # rubric-driven adjustments. Clamp only if wildly inconsistent.
+    if abs(score_total - deduction_score) > 3.0:
+        payload["score_total"] = round((score_total + deduction_score) / 2.0, 2)
+
+
+def _reconcile_rubric_with_score(payload: dict[str, Any]) -> None:
+    rubric = payload.get("rubric_scores")
+    if not isinstance(rubric, dict):
+        return
+
+    keys = ("conditions", "modeling", "logic", "calculation", "final")
+    values = [_to_float(rubric.get(key)) for key in keys]
+    if any(value is None for value in values):
+        return
+
+    score_total = _to_float(payload.get("score_total"))
+    if score_total is None:
+        return
+
+    rubric_sum = sum(value for value in values if value is not None)
+    delta = score_total - rubric_sum
+    if abs(delta) <= 0.25:
+        return
+
+    step = round(delta / 5.0, 3)
+    adjusted: dict[str, float] = {}
+    for key in keys:
+        base = _to_float(rubric.get(key)) or 0.0
+        adjusted[key] = round(_clamp(base + step, 0.0, 2.0), 2)
+
+    adjusted_sum = sum(adjusted.values())
+    if abs(adjusted_sum - score_total) > 0.4:
+        # keep score narrative stable by nudging score toward feasible rubric sum
+        payload["score_total"] = round((score_total + adjusted_sum) / 2.0, 2)
+
+    payload["rubric_scores"] = adjusted
+
+
+def _inject_uncertainty_hint(payload: dict[str, Any]) -> None:
+    confidence = _to_float(payload.get("confidence"))
+    if confidence is None:
+        return
+    if confidence >= 0.45:
+        return
+
+    missing = payload.get("missing_info")
+    if not isinstance(missing, list):
+        missing = []
+
+    hint = "필기 가독성이 낮아 일부 단계 판단은 보수적으로 처리했습니다."
+    if hint not in missing:
+        missing.append(hint)
+    payload["missing_info"] = missing[:6]
