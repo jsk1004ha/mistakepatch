@@ -17,7 +17,8 @@ const COMMAND_MAP: Record<string, string> = {
 
 function stripSystemMarkers(text: string): string {
   return text
-    .replace(/\[(?:step|rule):[^\]]+\]/gi, " ")
+    .replace(/\[(?:step|rule)\s*:\s*[^\]]+\]/gi, " ")
+    .replace(/\[(?:step|rule)[^\]]*\]/gi, " ")
     .replace(/\s{2,}/g, " ")
     .trim();
 }

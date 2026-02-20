@@ -71,6 +71,7 @@ _PROVENANCE_PATTERN = re.compile(
     r"\[step:(?P<step>[^\]]+)\]\s*\[rule:(?P<rule>[^\]]+)\]\s*(?P<body>.*)",
     flags=re.IGNORECASE,
 )
+_OUTPUT_PROVENANCE_TAG_PATTERN = re.compile(r"\[(?:step|rule)\s*:?\s*[^\]]+\]", flags=re.IGNORECASE)
 _ALLOWED_EXPR_CHARS = re.compile(r"^[0-9xX\+\-\*/\(\)\.\s]+$")
 _ALLOWED_EQUATION_CHARS = re.compile(r"^[0-9xX\+\-\*/\(\)\.\s=<>]+$")
 _DEFAULT_GENERIC_EVIDENCE = {
@@ -128,6 +129,7 @@ def process_analysis_job(payload: dict[str, Any]) -> None:
     _apply_highlight_mode_policy(validated, highlight_mode)
     if highlight_mode == "ocr_box":
         _inject_ocr_hints(validated, solution_image_path)
+    _sanitize_output_provenance(validated)
 
     try:
         save_analysis_result(analysis_id, validated, fallback_used=fallback_used, error_code=error_code)
@@ -190,6 +192,80 @@ def _apply_highlight_mode_policy(result: dict[str, Any], highlight_mode: str) ->
         item["highlight"] = normalized_highlight
 
     result["mistakes"] = mistakes
+
+
+def _sanitize_output_provenance(result: dict[str, Any]) -> None:
+    def _strip(value: Any, default: str, max_len: int) -> str:
+        if not isinstance(value, str):
+            return default[:max_len]
+        cleaned = _OUTPUT_PROVENANCE_TAG_PATTERN.sub(" ", value)
+        cleaned = " ".join(cleaned.split())
+        if not cleaned:
+            return default[:max_len]
+        return cleaned[:max_len]
+
+    mistakes = result.get("mistakes")
+    if isinstance(mistakes, list):
+        cleaned_mistakes: list[dict[str, Any]] = []
+        for item in mistakes:
+            if not isinstance(item, dict):
+                continue
+            current = dict(item)
+            current["evidence"] = _strip(current.get("evidence"), "감점 근거를 정리했습니다.", 240)
+            current["fix_instruction"] = _strip(
+                current.get("fix_instruction"),
+                "핵심 감점 구간을 한 줄씩 다시 전개해 수정하세요.",
+                240,
+            )
+            current["location_hint"] = _strip(current.get("location_hint"), "풀이 중간 구간", 120)
+            cleaned_mistakes.append(current)
+        result["mistakes"] = cleaned_mistakes
+
+    result["answer_verdict_reason"] = _strip(
+        result.get("answer_verdict_reason"),
+        "정오 판단 정보를 정리했습니다.",
+        120,
+    )
+
+    patch = result.get("patch")
+    if isinstance(patch, dict):
+        changes = patch.get("minimal_changes")
+        if isinstance(changes, list):
+            normalized_changes: list[dict[str, str]] = []
+            for change in changes:
+                if not isinstance(change, dict):
+                    continue
+                normalized_changes.append(
+                    {
+                        "change": _strip(change.get("change"), "핵심 줄을 보정하세요.", 220),
+                        "rationale": _strip(change.get("rationale"), "감점 원인을 줄이기 위한 수정입니다.", 180),
+                    }
+                )
+            patch["minimal_changes"] = normalized_changes
+        patch["patched_solution_brief"] = _strip(
+            patch.get("patched_solution_brief"),
+            "핵심 감점 구간을 최소 수정해 풀이 흐름을 유지하세요.",
+            320,
+        )
+        result["patch"] = patch
+
+    checklist = result.get("next_checklist")
+    if isinstance(checklist, list):
+        cleaned_checklist: list[str] = []
+        for item in checklist:
+            text = _strip(item, "", 100)
+            if text:
+                cleaned_checklist.append(text)
+        result["next_checklist"] = cleaned_checklist[:3]
+
+    missing_info = result.get("missing_info")
+    if isinstance(missing_info, list):
+        cleaned_missing: list[str] = []
+        for item in missing_info:
+            text = _strip(item, "", 100)
+            if text:
+                cleaned_missing.append(text)
+        result["missing_info"] = cleaned_missing[:6]
 
 
 def _get_llm_results(
